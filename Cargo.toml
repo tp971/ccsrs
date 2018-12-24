@@ -1,0 +1,9 @@
+[package]
+name = "ccsrs"
+version = "0.1.0"
+authors = ["Yannick Schillo <yschillo@yansonline.de>"]
+edition = "2018"
+
+[lib]
+name = "ccsrs"
+path = "src/lib.rs"
