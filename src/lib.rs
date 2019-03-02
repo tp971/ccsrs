@@ -1,7 +1,7 @@
 //#![feature(trace_macros)]
 //trace_macros!(true);
 
-pub mod boxed;
+//pub mod boxed;
 pub mod parser;
 
 #[macro_use]
@@ -9,7 +9,7 @@ pub mod macros;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
-use std::rc::Rc;
+use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -42,8 +42,8 @@ pub enum Exp {
     IntConst(i64),
     StrConst(String),
     IdExp(String),
-    Unary(UnaryOp, Rc<Exp>),
-    Binary(BinaryOp, Rc<Exp>, Rc<Exp>)
+    Unary(UnaryOp, Arc<Exp>),
+    Binary(BinaryOp, Arc<Exp>, Arc<Exp>)
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -51,41 +51,41 @@ pub enum Action {
     Tau,
     Delta,
     Act(String),
-    Snd(String, Option<Rc<Exp>>, Option<Rc<Exp>>),
-    Recv(String, Option<Rc<Exp>>, Option<Rc<Exp>>),
-    RecvInto(String, Option<Rc<Exp>>, String)
+    Snd(String, Option<Arc<Exp>>, Option<Arc<Exp>>),
+    Recv(String, Option<Arc<Exp>>, Option<Arc<Exp>>),
+    RecvInto(String, Option<Arc<Exp>>, String)
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Process {
     Null,
     Term,
-    Name(String, Vec<Rc<Exp>>),
-    Prefix(Action, Rc<Process>),
-    Choice(Rc<Process>, Rc<Process>),
-    Parallel(Rc<Process>, Rc<Process>),
-    Sequential(Rc<Process>, Rc<Process>),
-    Restrict(Rc<Process>, bool, BTreeSet<String>), //process, complement, restriction set
-    When(Rc<Exp>, Rc<Process>)
+    Name(String, Vec<Arc<Exp>>),
+    Prefix(Action, Arc<Process>),
+    Choice(Arc<Process>, Arc<Process>),
+    Parallel(Arc<Process>, Arc<Process>),
+    Sequential(Arc<Process>, Arc<Process>),
+    Restrict(Arc<Process>, bool, BTreeSet<String>), //process, complement, restriction set
+    When(Arc<Exp>, Arc<Process>)
 }
 
 #[derive(Clone, Debug)]
 pub struct Binding {
     pub(crate) name: String,
     pub(crate) args: Vec<String>,
-    pub(crate) process: Rc<Process>
+    pub(crate) process: Arc<Process>
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Program {
     pub(crate) bindings: HashMap<String, Binding>,
-    pub(crate) process: Option<Rc<Process>>
+    pub(crate) process: Option<Arc<Process>>
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Transition {
     pub act: Action,
-    pub to: Rc<Process>
+    pub to: Arc<Process>
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -170,51 +170,51 @@ impl Exp {
         }
     }
 
-    pub fn eval_exp(&self) -> Result<Rc<Exp>> {
+    pub fn eval_exp(&self) -> Result<Arc<Exp>> {
         Ok(match self.eval()? {
             Value::Bool(b) =>
-                Rc::new(Exp::BoolConst(b)),
+                Arc::new(Exp::BoolConst(b)),
             Value::Int(n) =>
-                Rc::new(Exp::IntConst(n)),
+                Arc::new(Exp::IntConst(n)),
             Value::Str(s) =>
-                Rc::new(Exp::StrConst(s.clone())),
+                Arc::new(Exp::StrConst(s.clone())),
         })
     }
 
-    pub fn subst(this: &Rc<Exp>, var: &str, val: &Value) -> Rc<Exp> {
+    pub fn subst(this: &Arc<Exp>, var: &str, val: &Value) -> Arc<Exp> {
         match this.as_ref() {
             Exp::BoolConst(_)
           | Exp::IntConst(_)
           | Exp::StrConst(_) =>
-                Rc::clone(this),
+                Arc::clone(this),
             Exp::IdExp(id) =>
                 if id == var {
                     match val {
                         Value::Bool(b) =>
-                            Rc::new(Exp::BoolConst(*b)),
+                            Arc::new(Exp::BoolConst(*b)),
                         Value::Int(n) =>
-                            Rc::new(Exp::IntConst(*n)),
+                            Arc::new(Exp::IntConst(*n)),
                         Value::Str(s) =>
-                            Rc::new(Exp::StrConst(s.clone()))
+                            Arc::new(Exp::StrConst(s.clone()))
                     }
                 } else {
-                    Rc::clone(this)
+                    Arc::clone(this)
                 },
             Exp::Unary(op, exp) => {
                 let exp2 = Exp::subst(exp, var, val);
-                if Rc::ptr_eq(&exp2, &exp) {
-                    Rc::clone(this)
+                if Arc::ptr_eq(&exp2, &exp) {
+                    Arc::clone(this)
                 } else {
-                    Rc::new(Exp::Unary(op.clone(), exp2))
+                    Arc::new(Exp::Unary(op.clone(), exp2))
                 }
             },
             Exp::Binary(op, l, r) => {
                 let l2 = Exp::subst(l, var, val);
                 let r2 = Exp::subst(r, var, val);
-                if Rc::ptr_eq(&l2, &l) && Rc::ptr_eq(&r2, &r) {
-                    Rc::clone(this)
+                if Arc::ptr_eq(&l2, &l) && Arc::ptr_eq(&r2, &r) {
+                    Arc::clone(this)
                 } else {
-                    Rc::new(Exp::Binary(op.clone(), l2, r2))
+                    Arc::new(Exp::Binary(op.clone(), l2, r2))
                 }
             }
         }
@@ -346,7 +346,7 @@ impl Action {
 }
 
 impl Transition {
-    pub fn new(act: Action, to: Rc<Process>) -> Transition {
+    pub fn new(act: Action, to: Arc<Process>) -> Transition {
         Transition { act, to }
     }
 }
@@ -395,7 +395,7 @@ impl Process {
             Process::Prefix(act, p) => {
                 let mut set = Vec::new();
                 set.push(Transition::new(
-                    act.eval()?, Rc::clone(p)
+                    act.eval()?, Arc::clone(p)
                 ));
                 Ok(set)
             },
@@ -424,26 +424,26 @@ impl Process {
                             Some(None) => {
                                 //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
-                                    ccs_act!{ i }, ccs!{ @{Rc::clone(&l.to)} | @{Rc::clone(&r.to)} }
+                                    ccs_act!{ i }, ccs!{ @{Arc::clone(&l.to)} | @{Arc::clone(&r.to)} }
                                 ));
                             },
                             Some(Some((Side::Left, var, val))) => {
                                 //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
-                                    ccs_act!{ i }, ccs!{ @{Process::subst(&l.to, &var, &val)} | @{Rc::clone(&r.to)} }
+                                    ccs_act!{ i }, ccs!{ @{Process::subst(&l.to, &var, &val)} | @{Arc::clone(&r.to)} }
                                 ));
                             },
                             Some(Some((Side::Right, var, val))) => {
                                 //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
-                                    ccs_act!{ i }, ccs!{ @{Rc::clone(&l.to)} | @{Process::subst(&r.to, &var, &val)} }
+                                    ccs_act!{ i }, ccs!{ @{Arc::clone(&l.to)} | @{Process::subst(&r.to, &var, &val)} }
                                 ));
                             }
                         }
 
                         if let (Action::Delta, Action::Delta) = (&l.act, &r.act) {
                             set.push(Transition::new(
-                                ccs_act!{ e }, ccs!{ @{Rc::clone(&l.to)} | @{Rc::clone(&r.to)} }
+                                ccs_act!{ e }, ccs!{ @{Arc::clone(&l.to)} | @{Arc::clone(&r.to)} }
                             ));
                         }
                     }
@@ -453,7 +453,7 @@ impl Process {
                         continue;
                     }
                     set.push(Transition::new(
-                        next.act, ccs!{ @{next.to} | @{Rc::clone(r)} }
+                        next.act, ccs!{ @{next.to} | @{Arc::clone(r)} }
                     ));
                 }
                 for next in trans_r {
@@ -461,7 +461,7 @@ impl Process {
                         continue;
                     }
                     set.push(Transition::new(
-                        next.act, ccs!{ @{Rc::clone(l)} | @{next.to} }
+                        next.act, ccs!{ @{Arc::clone(l)} | @{next.to} }
                     ));
                 }
                 Ok(set)
@@ -471,11 +471,11 @@ impl Process {
                 for next in l._get_transitions(program, seen)? {
                     if let Action::Delta = next.act {
                         set.push(Transition::new(
-                            ccs_act!{ i }, Rc::clone(&r)
+                            ccs_act!{ i }, Arc::clone(&r)
                         ));
                     } else {
                         set.push(Transition::new(
-                            next.act, ccs!{ @{next.to}; @{Rc::clone(&r)} }
+                            next.act, ccs!{ @{next.to}; @{Arc::clone(&r)} }
                         ));
                     }
                 }
@@ -492,7 +492,7 @@ impl Process {
                         }
                     }
                     res.push(Transition::new(
-                        next.act, Rc::new(Process::Restrict(next.to, *comp, set.clone()))
+                        next.act, Arc::new(Process::Restrict(next.to, *comp, set.clone()))
                     ));
                 }
                 Ok(res)
@@ -512,35 +512,35 @@ impl Process {
         }
     }
 
-    pub fn subst(this: &Rc<Process>, var: &str, val: &Value) -> Rc<Process> {
+    pub fn subst(this: &Arc<Process>, var: &str, val: &Value) -> Arc<Process> {
         match this.as_ref() {
             Process::Null =>
-                Rc::clone(this),
+                Arc::clone(this),
             Process::Term =>
-                Rc::clone(this),
+                Arc::clone(this),
             Process::Name(name, args) => {
                 let mut args2 = Vec::new();
                 let mut new = false;
                 for next in args {
                     let next2 = Exp::subst(next, var, val);
-                    if !new && !Rc::ptr_eq(&next2, next) {
+                    if !new && !Arc::ptr_eq(&next2, next) {
                         new = true;
                     }
                     args2.push(next2);
                 }
                 if new {
-                    Rc::new(Process::Name(name.clone(), args2))
+                    Arc::new(Process::Name(name.clone(), args2))
                 } else {
-                    Rc::clone(this)
+                    Arc::clone(this)
                 }
             },
             Process::Prefix(Action::RecvInto(name, None, var2), p) =>
                 if var2 == var {
-                    Rc::clone(this)
+                    Arc::clone(this)
                 } else {
                     let p2 = Process::subst(p, var, val);
-                    if Rc::ptr_eq(&p2, &p) {
-                        Rc::clone(this)
+                    if Arc::ptr_eq(&p2, &p) {
+                        Arc::clone(this)
                     } else {
                         ccs!{ @{Action::RecvInto(name.clone(), None, var2.clone())}.@{p2} }
                     }
@@ -548,15 +548,15 @@ impl Process {
             Process::Prefix(Action::RecvInto(name, Some(param), var2), p) => {
                 let param2 = Exp::subst(param, var, val);
                 if var2 == var {
-                    if Rc::ptr_eq(&param2, &param) {
-                        Rc::clone(this)
+                    if Arc::ptr_eq(&param2, &param) {
+                        Arc::clone(this)
                     } else {
-                        ccs!{ @{Action::RecvInto(name.clone(), Some(param2), var2.clone())} . @{Rc::clone(p)} }
+                        ccs!{ @{Action::RecvInto(name.clone(), Some(param2), var2.clone())} . @{Arc::clone(p)} }
                     }
                 } else {
                     let p2 = Process::subst(p, var, val);
-                    if Rc::ptr_eq(&p2, &p) && Rc::ptr_eq(&param2, &param) {
-                        Rc::clone(this)
+                    if Arc::ptr_eq(&p2, &p) && Arc::ptr_eq(&param2, &param) {
+                        Arc::clone(this)
                     } else {
                         ccs!{ @{Action::RecvInto(name.clone(), Some(param2), var2.clone())} . @{p2} }
                     }
@@ -565,8 +565,8 @@ impl Process {
             Process::Prefix(act, p) => {
                 let act2 = act.subst(var, val);
                 let p2 = Process::subst(p, var, val);
-                if act2 == *act && Rc::ptr_eq(&p2, &p) {
-                    Rc::clone(this)
+                if act2 == *act && Arc::ptr_eq(&p2, &p) {
+                    Arc::clone(this)
                 } else {
                     ccs!{ @{act2}.@{p2} }
                 }
@@ -574,8 +574,8 @@ impl Process {
             Process::Choice(l, r) => {
                 let l2 = Process::subst(l, var, val);
                 let r2 = Process::subst(r, var, val);
-                if Rc::ptr_eq(&l2, &l) && Rc::ptr_eq(&r2, &r) {
-                    Rc::clone(this)
+                if Arc::ptr_eq(&l2, &l) && Arc::ptr_eq(&r2, &r) {
+                    Arc::clone(this)
                 } else {
                     ccs!{ @{l2} + @{r2} }
                 }
@@ -583,8 +583,8 @@ impl Process {
             Process::Parallel(l, r) => {
                 let l2 = Process::subst(l, var, val);
                 let r2 = Process::subst(r, var, val);
-                if Rc::ptr_eq(&l2, &l) && Rc::ptr_eq(&r2, &r) {
-                    Rc::clone(this)
+                if Arc::ptr_eq(&l2, &l) && Arc::ptr_eq(&r2, &r) {
+                    Arc::clone(this)
                 } else {
                     ccs!{ @{l2} | @{r2} }
                 }
@@ -592,25 +592,25 @@ impl Process {
             Process::Sequential(l, r) => {
                 let l2 = Process::subst(l, var, val);
                 let r2 = Process::subst(r, var, val);
-                if Rc::ptr_eq(&l2, &l) && Rc::ptr_eq(&r2, &r) {
-                    Rc::clone(this)
+                if Arc::ptr_eq(&l2, &l) && Arc::ptr_eq(&r2, &r) {
+                    Arc::clone(this)
                 } else {
                     ccs!{ @{l2}; @{r2} }
                 }
             },
             Process::Restrict(p, comp, set) => {
                 let p2 = Process::subst(p, var, val);
-                if Rc::ptr_eq(&p2, &p) {
-                    Rc::clone(this)
+                if Arc::ptr_eq(&p2, &p) {
+                    Arc::clone(this)
                 } else {
-                    Rc::new(Process::Restrict(p2, *comp, set.clone()))
+                    Arc::new(Process::Restrict(p2, *comp, set.clone()))
                 }
             }
             Process::When(cond, p) => {
                 let cond2 = Exp::subst(cond, var, val);
                 let p2 = Process::subst(p, var, val);
-                if Rc::ptr_eq(&cond2, &cond) && Rc::ptr_eq(&p2, &p) {
-                    Rc::clone(this)
+                if Arc::ptr_eq(&cond2, &cond) && Arc::ptr_eq(&p2, &p) {
+                    Arc::clone(this)
                 } else {
                     ccs!{ when (@{cond2}) @{p2} }
                 }
@@ -620,7 +620,7 @@ impl Process {
 }
 
 impl Binding {
-    pub fn new(name: String, args: Vec<String>, process: Rc<Process>) -> Binding {
+    pub fn new(name: String, args: Vec<String>, process: Arc<Process>) -> Binding {
         Binding { name, args, process }
     }
 
@@ -632,16 +632,16 @@ impl Binding {
         &self.args
     }
 
-    pub fn process(&self) -> &Rc<Process> {
+    pub fn process(&self) -> &Arc<Process> {
         &self.process
     }
 
-    pub fn instantiate(&self, args: &Vec<Value>) -> Result<Rc<Process>> {
+    pub fn instantiate(&self, args: &Vec<Value>) -> Result<Arc<Process>> {
         if args.len() != self.args.len() {
             return Err(Error::ExpProcessArgs(self.name.clone(), self.args.clone(), args.clone()));
         }
 
-        let mut res = Rc::clone(&self.process);
+        let mut res = Arc::clone(&self.process);
         for (name, arg) in self.args.iter().zip(args.iter()) {
             res = Process::subst(&res, &name, &arg);
         }
@@ -666,11 +666,11 @@ impl Program {
         &self.bindings
     }
 
-    pub fn set_process(&mut self, process: Rc<Process>) {
+    pub fn set_process(&mut self, process: Arc<Process>) {
         self.process.replace(process);
     }
 
-    pub fn process(&self) -> Option<Rc<Process>> {
+    pub fn process(&self) -> Option<Arc<Process>> {
         self.process.clone()
     }
 }

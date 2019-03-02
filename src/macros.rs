@@ -82,7 +82,7 @@ macro_rules! ccs {
         #[allow(unused_imports)]
         use std::collections::BTreeSet;
         #[allow(unused_imports)]
-        use std::rc::Rc;
+        use std::sync::Arc;
         ccs_parse_operand!([$($ts)*] [] [])
     }};
 }
@@ -158,20 +158,20 @@ macro_rules! ccs_parse_operand {
         ccs_parse_operand!([$($ts)*] [($var) $($output)*] [. $($ops)*])
     };
     ([0 $($ts:tt)*] [$($output:tt)*] [$($ops:tt)*]) => {{
-        ccs_apply_unary!([$($ts)*] [(Rc::new(Process::Null)) $($output)*] [$($ops)*])
+        ccs_apply_unary!([$($ts)*] [(Arc::new(Process::Null)) $($output)*] [$($ops)*])
     }};
     ([1 $($ts:tt)*] [$($output:tt)*] [$($ops:tt)*]) => {{
-        ccs_apply_unary!([$($ts)*] [(Rc::new(Process::Term)) $($output)*] [$($ops)*])
+        ccs_apply_unary!([$($ts)*] [(Arc::new(Process::Term)) $($output)*] [$($ops)*])
     }};
     ([$name:ident [$($args:tt),*] $($ts:tt)*] [$($output:tt)*] [$($ops:tt)*]) => {{
         let name = stringify!($name);
         let mut args = Vec::new();
         $( args.push(ccs_exp!{ $args }); )*
-        ccs_apply_unary!([$($ts)*] [(Rc::new(Process::Name(name.to_string(), args))) $($output)*] [$($ops)*])
+        ccs_apply_unary!([$($ts)*] [(Arc::new(Process::Name(name.to_string(), args))) $($output)*] [$($ops)*])
     }};
     ([$name:ident $($ts:tt)*] [$($output:tt)*] [$($ops:tt)*]) => {{
         let name = stringify!($name);
-        ccs_apply_unary!([$($ts)*] [(Rc::new(Process::Name(name.to_string(), vec![]))) $($output)*] [$($ops)*])
+        ccs_apply_unary!([$($ts)*] [(Arc::new(Process::Name(name.to_string(), vec![]))) $($output)*] [$($ops)*])
     }};
     ([@$var:tt $($ts:tt)*] [$($output:tt)*] [$($ops:tt)*]) => {
         ccs_apply_unary!([$($ts)*] [($var) $($output)*] [$($ops)*])
@@ -185,23 +185,23 @@ macro_rules! ccs_parse_operand {
 #[macro_export]
 macro_rules! ccs_apply_unary {
     ([$($ts:tt)*] [($process:expr) ($cond:expr) $($output:tt)*] [when $($ops:tt)*]) => {{
-        ccs_apply_unary!([$($ts)*] [(Rc::new(Process::When($cond, $process))) $($output)*] [$($ops)*])
+        ccs_apply_unary!([$($ts)*] [(Arc::new(Process::When($cond, $process))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($process:expr) ($action:expr) $($output:tt)*] [. $($ops:tt)*]) => {{
-        ccs_apply_unary!([$($ts)*] [(Rc::new(Process::Prefix($action, $process))) $($output)*] [$($ops)*])
+        ccs_apply_unary!([$($ts)*] [(Arc::new(Process::Prefix($action, $process))) $($output)*] [$($ops)*])
     }};
     ([/ { * } $($ts:tt)*] [($process:expr) $($output:tt)*] [$($ops:tt)*]) => {{
-        ccs_apply_unary!([$($ts)*] [(Rc::new(Process::Restrict($process, true, BTreeSet::new()))) $($output)*] [$($ops)*])
+        ccs_apply_unary!([$($ts)*] [(Arc::new(Process::Restrict($process, true, BTreeSet::new()))) $($output)*] [$($ops)*])
     }};
     ([/ { *, $($acts:ident),* } $($ts:tt)*] [($process:expr) $($output:tt)*] [$($ops:tt)*]) => {{
         let mut set = BTreeSet::new();
         $( set.insert(stringify!($acts).to_string()); )*
-        ccs_apply_unary!([$($ts)*] [(Rc::new(Process::Restrict($process, true, set))) $($output)*] [$($ops)*])
+        ccs_apply_unary!([$($ts)*] [(Arc::new(Process::Restrict($process, true, set))) $($output)*] [$($ops)*])
     }};
     ([/ { $($acts:ident),* } $($ts:tt)*] [($process:expr) $($output:tt)*] [$($ops:tt)*]) => {{
         let mut set = BTreeSet::new();
         $( set.insert(stringify!($acts).to_string()); )*
-        ccs_apply_unary!([$($ts)*] [(Rc::new(Process::Restrict($process, false, set))) $($output)*] [$($ops)*])
+        ccs_apply_unary!([$($ts)*] [(Arc::new(Process::Restrict($process, false, set))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [$($output:tt)*] [$($ops:tt)*]) => {
         ccs_parse_operator!([$($ts)*] [$($output)*] [$($ops)*])
@@ -229,13 +229,13 @@ macro_rules! ccs_parse_operator {
 #[macro_export]
 macro_rules! ccs_apply_binary {
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [+ $($ops:tt)*]) => {{
-        ccs_parse_operator!([$($ts)*] [(Rc::new(Process::Choice($a, $b))) $($output)*] [$($ops)*])
+        ccs_parse_operator!([$($ts)*] [(Arc::new(Process::Choice($a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [| $($ops:tt)*]) => {{
-        ccs_parse_operator!([$($ts)*] [(Rc::new(Process::Parallel($a, $b))) $($output)*] [$($ops)*])
+        ccs_parse_operator!([$($ts)*] [(Arc::new(Process::Parallel($a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [; $($ops:tt)*]) => {{
-        ccs_parse_operator!([$($ts)*] [(Rc::new(Process::Sequential($a, $b))) $($output)*] [$($ops)*])
+        ccs_parse_operator!([$($ts)*] [(Arc::new(Process::Sequential($a, $b))) $($output)*] [$($ops)*])
     }};
 }
 
@@ -248,7 +248,7 @@ macro_rules! ccs_exp {
         #[allow(unused_imports)]
         use std::collections::BTreeSet;
         #[allow(unused_imports)]
-        use std::rc::Rc;
+        use std::sync::Arc;
         ccs_exp_parse_operand!([$($ts)*] [] [])
     }};
 }
@@ -265,11 +265,11 @@ macro_rules! ccs_exp_parse_operand {
         ccs_exp_parse_operand!([$($ts)*] [$($output)*] [.! $($ops)*])
     }};
     ([:$const:tt $($ts:tt)*] [$($output:tt)*] [$($ops:tt)*]) => {{
-        ccs_exp_apply_unary!([$($ts)*] [(Rc::new(Exp::from($const))) $($output)*] [$($ops)*])
+        ccs_exp_apply_unary!([$($ts)*] [(Arc::new(Exp::from($const))) $($output)*] [$($ops)*])
     }};
     ([$name:ident $($ts:tt)*] [$($output:tt)*] [$($ops:tt)*]) => {{
         let name = stringify!($name);
-        ccs_exp_apply_unary!([$($ts)*] [(Rc::new(Exp::IdExp(name.to_string()))) $($output)*] [$($ops)*])
+        ccs_exp_apply_unary!([$($ts)*] [(Arc::new(Exp::IdExp(name.to_string()))) $($output)*] [$($ops)*])
     }};
     ([@$var:tt $($ts:tt)*] [$($output:tt)*] [$($ops:tt)*]) => {
         ccs_exp_apply_unary!([$($ts)*] [($var) $($output)*] [$($ops)*])
@@ -283,13 +283,13 @@ macro_rules! ccs_exp_parse_operand {
 #[macro_export]
 macro_rules! ccs_exp_apply_unary {
     ([$($ts:tt)*] [($exp:expr) $($output:tt)*] [.+ $($ops:tt)*]) => {{
-        ccs_exp_apply_unary!([$($ts)*] [(Rc::new(Exp::Unary(UnaryOp::Plus, $exp))) $($output)*] [$($ops)*])
+        ccs_exp_apply_unary!([$($ts)*] [(Arc::new(Exp::Unary(UnaryOp::Plus, $exp))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($exp:expr) $($output:tt)*] [.- $($ops:tt)*]) => {{
-        ccs_exp_apply_unary!([$($ts)*] [(Rc::new(Exp::Unary(UnaryOp::Minus, $exp))) $($output)*] [$($ops)*])
+        ccs_exp_apply_unary!([$($ts)*] [(Arc::new(Exp::Unary(UnaryOp::Minus, $exp))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($exp:expr) $($output:tt)*] [.! $($ops:tt)*]) => {{
-        ccs_exp_apply_unary!([$($ts)*] [(Rc::new(Exp::Unary(UnaryOp::Not, $exp))) $($output)*] [$($ops)*])
+        ccs_exp_apply_unary!([$($ts)*] [(Arc::new(Exp::Unary(UnaryOp::Not, $exp))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [$($output:tt)*] [$($ops:tt)*]) => {
         ccs_exp_parse_operator!([$($ts)*] [$($output)*] [$($ops)*])
@@ -449,46 +449,46 @@ macro_rules! ccs_exp_parse_operator {
 #[macro_export]
 macro_rules! ccs_exp_apply_binary {
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [+ $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::Plus, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::Plus, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [- $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::Minus, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::Minus, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [* $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::Star, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::Star, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [/ $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::Slash, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::Slash, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [% $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::Percent, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::Percent, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [^ $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::Hat, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::Hat, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [< $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::LT, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::LT, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [<= $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::LEq, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::LEq, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [> $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::GT, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::GT, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [>= $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::GEq, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::GEq, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [== $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::EqEq, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::EqEq, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [!= $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::NEq, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::NEq, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [&& $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::AndAnd, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::AndAnd, $a, $b))) $($output)*] [$($ops)*])
     }};
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [|| $($ops:tt)*]) => {{
-        ccs_exp_parse_operator!([$($ts)*] [(Rc::new(Exp::Binary(BinaryOp::PipePipe, $a, $b))) $($output)*] [$($ops)*])
+        ccs_exp_parse_operator!([$($ts)*] [(Arc::new(Exp::Binary(BinaryOp::PipePipe, $a, $b))) $($output)*] [$($ops)*])
     }};
 }
 
@@ -502,13 +502,13 @@ macro_rules! ccs_bind {
     ($name:ident := $($ts:tt)*) => {{
         use $crate::*;
         #[allow(unused_imports)]
-        use std::rc::Rc;
+        use std::sync::Arc;
         Binding::new(stringify!($name).to_string(), vec![], ccs!($($ts)*))
     }};
     ($name:ident[$($args:ident),*] := $($ts:tt)*) => {{
         use $crate::*;
         #[allow(unused_imports)]
-        use std::rc::Rc;
+        use std::sync::Arc;
         Binding::new(stringify!($name).to_string(), vec![$(stringify!($args).to_string()),*], ccs!($($ts)*))
     }};
 }
@@ -520,7 +520,7 @@ macro_rules! ccs_prog {
     ($({$($binds:tt)*})*) => {{
         use $crate::*;
         #[allow(unused_imports)]
-        use std::rc::Rc;
+        use std::sync::Arc;
         let mut prog = Program::new();
         $( prog.add_binding(ccs_bind!($($binds)*)); )*
         prog
@@ -528,7 +528,7 @@ macro_rules! ccs_prog {
     ($({$($binds:tt)*})* ($($proc:tt)+)) => {{
         use $crate::*;
         #[allow(unused_imports)]
-        use std::rc::Rc;
+        use std::sync::Arc;
         let mut prog = Program::new();
         $( prog.add_binding(ccs_bind!($($binds)*)); )*
         prog.set_process(ccs!{$($proc)*});
