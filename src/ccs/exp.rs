@@ -115,13 +115,23 @@ impl Exp {
     }
 
     pub fn subst(this: &Arc<Exp>, var: &str, val: &Value) -> Arc<Exp> {
+        let mut subst = HashMap::new();
+        subst.insert(var, val);
+        Exp::subst_map(this, &subst)
+    }
+
+    pub fn subst_map(this: &Arc<Exp>, subst: &HashMap<&str, &Value>) -> Arc<Exp> {
+        if subst.is_empty() {
+            return Arc::clone(this);
+        }
+
         match this.as_ref() {
             Exp::BoolConst(_)
           | Exp::IntConst(_)
           | Exp::StrConst(_) =>
                 Arc::clone(this),
             Exp::IdExp(id) =>
-                if id == var {
+                if let Some(val) = subst.get(&id[..]) {
                     match val {
                         Value::Bool(b) =>
                             Arc::new(Exp::BoolConst(*b)),
@@ -134,7 +144,7 @@ impl Exp {
                     Arc::clone(this)
                 },
             Exp::Unary(op, exp) => {
-                let exp2 = Exp::subst(exp, var, val);
+                let exp2 = Exp::subst_map(exp, subst);
                 if Arc::ptr_eq(&exp2, &exp) {
                     Arc::clone(this)
                 } else {
@@ -142,8 +152,8 @@ impl Exp {
                 }
             },
             Exp::Binary(op, l, r) => {
-                let l2 = Exp::subst(l, var, val);
-                let r2 = Exp::subst(r, var, val);
+                let l2 = Exp::subst_map(l, subst);
+                let r2 = Exp::subst_map(r, subst);
                 if Arc::ptr_eq(&l2, &l) && Arc::ptr_eq(&r2, &r) {
                     Arc::clone(this)
                 } else {

@@ -97,6 +97,12 @@ impl Action {
     }
 
     pub fn subst(&self, var: &str, val: &Value) -> Action {
+        let mut subst = HashMap::new();
+        subst.insert(var, val);
+        self.subst_map(&subst)
+    }
+
+    pub fn subst_map(&self, subst: &HashMap<&str, &Value>) -> Action {
         match self {
             Action::Tau
           | Action::Delta
@@ -107,21 +113,21 @@ impl Action {
                 self.clone(),
 
             Action::Snd(name, None, Some(exp)) =>
-                Action::Snd(name.clone(), None, Some(Exp::subst(exp, var, val))),
+                Action::Snd(name.clone(), None, Some(Exp::subst_map(exp, subst))),
             Action::Snd(name, Some(param), None) =>
-                Action::Snd(name.clone(), Some(Exp::subst(param, var, val)), None),
+                Action::Snd(name.clone(), Some(Exp::subst_map(param, subst)), None),
             Action::Snd(name, Some(param), Some(exp)) =>
-                Action::Snd(name.clone(), Some(Exp::subst(param, var, val)), Some(Exp::subst(exp, var, val))),
+                Action::Snd(name.clone(), Some(Exp::subst_map(param, subst)), Some(Exp::subst_map(exp, subst))),
 
             Action::Recv(name, None, Some(exp)) =>
-                Action::Recv(name.clone(), None, Some(Exp::subst(exp, var, val))),
+                Action::Recv(name.clone(), None, Some(Exp::subst_map(exp, subst))),
             Action::Recv(name, Some(param), None) =>
-                Action::Recv(name.clone(), Some(Exp::subst(param, var, val)), None),
+                Action::Recv(name.clone(), Some(Exp::subst_map(param, subst)), None),
             Action::Recv(name, Some(param), Some(exp)) =>
-                Action::Recv(name.clone(), Some(Exp::subst(param, var, val)), Some(Exp::subst(exp, var, val))),
+                Action::Recv(name.clone(), Some(Exp::subst_map(param, subst)), Some(Exp::subst_map(exp, subst))),
 
             Action::RecvInto(name, Some(param), var2) =>
-                Action::RecvInto(name.clone(), Some(Exp::subst(param, var, val)), var2.clone()),
+                Action::RecvInto(name.clone(), Some(Exp::subst_map(param, subst)), var2.clone()),
         }
     }
 
@@ -317,6 +323,16 @@ impl Process {
     }
 
     pub fn subst(this: &Arc<Process>, var: &str, val: &Value) -> Arc<Process> {
+        let mut subst = HashMap::new();
+        subst.insert(var, val);
+        Process::subst_map(this, &subst)
+    }
+
+    pub fn subst_map(this: &Arc<Process>, subst: &HashMap<&str, &Value>) -> Arc<Process> {
+        if subst.is_empty() {
+            return Arc::clone(this);
+        }
+
         match this.as_ref() {
             Process::Null =>
                 Arc::clone(this),
@@ -326,7 +342,7 @@ impl Process {
                 let mut args2 = Vec::new();
                 let mut new = false;
                 for next in args {
-                    let next2 = Exp::subst(next, var, val);
+                    let next2 = Exp::subst_map(next, subst);
                     if !new && !Arc::ptr_eq(&next2, next) {
                         new = true;
                     }
@@ -338,37 +354,44 @@ impl Process {
                     Arc::clone(this)
                 }
             },
-            Process::Prefix(Action::RecvInto(name, None, var2), p) =>
-                if var2 == var {
+            Process::Prefix(Action::RecvInto(name, None, var), p) => {
+                //let mut subst2 = subst.clone();
+                //subst2.remove(&var[..]);
+                let mut subst2 = HashMap::with_capacity(subst.capacity());
+                for (var2, value) in subst.iter() {
+                    if var != var2 {
+                        subst2.insert(*var2, *value);
+                    }
+                }
+                let p2 = Process::subst_map(p, &subst2);
+
+                if Arc::ptr_eq(&p2, &p) {
                     Arc::clone(this)
                 } else {
-                    let p2 = Process::subst(p, var, val);
-                    if Arc::ptr_eq(&p2, &p) {
-                        Arc::clone(this)
-                    } else {
-                        ccs!{ @{Action::RecvInto(name.clone(), None, var2.clone())}.@{p2} }
+                    ccs!{ @{Action::RecvInto(name.clone(), None, var.clone())}.@{p2} }
+                }
+            },
+            Process::Prefix(Action::RecvInto(name, Some(param), var), p) => {
+                let param2 = Exp::subst_map(param, subst);
+                //let mut subst2 = subst.clone();
+                //subst2.remove(&var[..]);
+                let mut subst2 = HashMap::with_capacity(subst.capacity());
+                for (var2, value) in subst.iter() {
+                    if var != var2 {
+                        subst2.insert(*var2, *value);
                     }
-                },
-            Process::Prefix(Action::RecvInto(name, Some(param), var2), p) => {
-                let param2 = Exp::subst(param, var, val);
-                if var2 == var {
-                    if Arc::ptr_eq(&param2, &param) {
-                        Arc::clone(this)
-                    } else {
-                        ccs!{ @{Action::RecvInto(name.clone(), Some(param2), var2.clone())} . @{Arc::clone(p)} }
-                    }
+                }
+                let p2 = Process::subst_map(p, &subst2);
+
+                if Arc::ptr_eq(&p2, &p) && Arc::ptr_eq(&param2, &param) {
+                    Arc::clone(this)
                 } else {
-                    let p2 = Process::subst(p, var, val);
-                    if Arc::ptr_eq(&p2, &p) && Arc::ptr_eq(&param2, &param) {
-                        Arc::clone(this)
-                    } else {
-                        ccs!{ @{Action::RecvInto(name.clone(), Some(param2), var2.clone())} . @{p2} }
-                    }
+                    ccs!{ @{Action::RecvInto(name.clone(), Some(param2), var.clone())} . @{p2} }
                 }
             },
             Process::Prefix(act, p) => {
-                let act2 = act.subst(var, val);
-                let p2 = Process::subst(p, var, val);
+                let act2 = act.subst_map(subst);
+                let p2 = Process::subst_map(p, subst);
                 if act2 == *act && Arc::ptr_eq(&p2, &p) {
                     Arc::clone(this)
                 } else {
@@ -376,8 +399,8 @@ impl Process {
                 }
             }
             Process::Choice(l, r) => {
-                let l2 = Process::subst(l, var, val);
-                let r2 = Process::subst(r, var, val);
+                let l2 = Process::subst_map(l, subst);
+                let r2 = Process::subst_map(r, subst);
                 if Arc::ptr_eq(&l2, &l) && Arc::ptr_eq(&r2, &r) {
                     Arc::clone(this)
                 } else {
@@ -385,8 +408,8 @@ impl Process {
                 }
             },
             Process::Parallel(l, r) => {
-                let l2 = Process::subst(l, var, val);
-                let r2 = Process::subst(r, var, val);
+                let l2 = Process::subst_map(l, subst);
+                let r2 = Process::subst_map(r, subst);
                 if Arc::ptr_eq(&l2, &l) && Arc::ptr_eq(&r2, &r) {
                     Arc::clone(this)
                 } else {
@@ -394,8 +417,8 @@ impl Process {
                 }
             },
             Process::Sequential(l, r) => {
-                let l2 = Process::subst(l, var, val);
-                let r2 = Process::subst(r, var, val);
+                let l2 = Process::subst_map(l, subst);
+                let r2 = Process::subst_map(r, subst);
                 if Arc::ptr_eq(&l2, &l) && Arc::ptr_eq(&r2, &r) {
                     Arc::clone(this)
                 } else {
@@ -403,7 +426,7 @@ impl Process {
                 }
             },
             Process::Restrict(p, comp, set) => {
-                let p2 = Process::subst(p, var, val);
+                let p2 = Process::subst_map(p, subst);
                 if Arc::ptr_eq(&p2, &p) {
                     Arc::clone(this)
                 } else {
@@ -411,8 +434,8 @@ impl Process {
                 }
             }
             Process::When(cond, p) => {
-                let cond2 = Exp::subst(cond, var, val);
-                let p2 = Process::subst(p, var, val);
+                let cond2 = Exp::subst_map(cond, subst);
+                let p2 = Process::subst_map(p, subst);
                 if Arc::ptr_eq(&cond2, &cond) && Arc::ptr_eq(&p2, &p) {
                     Arc::clone(this)
                 } else {

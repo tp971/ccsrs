@@ -70,11 +70,11 @@ impl Binding {
             return Err(Error::ExpProcessArgs(self.name.clone(), self.args.clone(), args.clone()));
         }
 
-        let mut res = Arc::clone(&self.process);
+        let mut subst = HashMap::new();
         for (name, arg) in self.args.iter().zip(args.iter()) {
-            res = Process::subst(&res, &name, &arg);
+            subst.insert(&name[..], arg);
         }
-        Ok(res)
+        Ok(Process::subst_map(&self.process, &subst))
     }
 }
 
