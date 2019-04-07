@@ -3,7 +3,6 @@ use std::io;
 use super::*;
 
 pub struct Lexer<I: Iterator<Item = io::Result<u8>>> {
-    source: String,
     input: I,
     row: usize,
     col: usize,
@@ -13,9 +12,8 @@ pub struct Lexer<I: Iterator<Item = io::Result<u8>>> {
 }
 
 impl<I: Iterator<Item = io::Result<u8>>> Lexer<I> {
-    pub fn new(source: String, input: I, lookahead: usize) -> Lexer<I> {
+    pub fn new(input: I, lookahead: usize) -> Lexer<I> {
         Lexer {
-            source,
             input,
             row: 0,
             col: 0,
@@ -70,7 +68,6 @@ impl<I: Iterator<Item = io::Result<u8>>> Lexer<I> {
 
         if self.ch.is_none() {
             return Ok(TokenInfo {
-                source: self.source.clone(),
                 row: self.row,
                 col: self.col,
                 token: Token::EOF
@@ -193,7 +190,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Lexer<I> {
             }
         }?;
 
-        Ok(TokenInfo { source: self.source.clone(), row, col, token })
+        Ok(TokenInfo { row, col, token })
     }
 
     fn _next_str(&mut self) -> Result<Token> {

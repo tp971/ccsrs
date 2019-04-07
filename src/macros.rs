@@ -1,13 +1,13 @@
-pub use crate::{ccs_act, ccs, ccs_bind, ccs_prog};
-
 #[macro_export]
 macro_rules! ccs_act {
     ($($ts:tt)*) => {{
         use $crate::*;
+        use $crate::ccs::*;
         ccs_parse_act!($($ts)*)
     }};
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! ccs_parse_act {
     (i) => {
@@ -87,6 +87,7 @@ macro_rules! ccs {
     }};
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! ccs_parse_operand {
     ([when $cond:tt $($ts:tt)*] [$($output:tt)*] [$($ops:tt)*]) => {{
@@ -182,6 +183,7 @@ macro_rules! ccs_parse_operand {
     }};
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! ccs_apply_unary {
     ([$($ts:tt)*] [($process:expr) ($cond:expr) $($output:tt)*] [when $($ops:tt)*]) => {{
@@ -208,6 +210,7 @@ macro_rules! ccs_apply_unary {
     };
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! ccs_parse_operator {
     ([+ $($ts:tt)*] [$($output:tt)*] [+ $($ops:tt)*]) => { ccs_apply_binary! ([+ $($ts)*] [$($output)*] [+ $($ops)*]) };
@@ -226,6 +229,7 @@ macro_rules! ccs_parse_operator {
     ([]             [$($output:tt)*] [$($ops:tt)*])   => { ccs_apply_binary! ([]        [$($output)*] [$($ops)*]) };
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! ccs_apply_binary {
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [+ $($ops:tt)*]) => {{
@@ -253,6 +257,7 @@ macro_rules! ccs_exp {
     }};
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! ccs_exp_parse_operand {
     ([+ $($ts:tt)*] [$($output:tt)*] [$($ops:tt)*]) => {{
@@ -280,6 +285,7 @@ macro_rules! ccs_exp_parse_operand {
     }};
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! ccs_exp_apply_unary {
     ([$($ts:tt)*] [($exp:expr) $($output:tt)*] [.+ $($ops:tt)*]) => {{
@@ -296,6 +302,7 @@ macro_rules! ccs_exp_apply_unary {
     };
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! ccs_exp_parse_operator {
     ([* $($ts:tt)*] [$($output:tt)*] [* $($ops:tt)*]) => { ccs_exp_apply_binary! ([* $($ts)*] [$($output)*] [* $($ops)*]) };
@@ -446,6 +453,7 @@ macro_rules! ccs_exp_parse_operator {
     ([]             [$($output:tt)*] [$($ops:tt)*])   => { ccs_exp_apply_binary! ([]        [$($output)*] [$($ops)*]) };
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! ccs_exp_apply_binary {
     ([$($ts:tt)*] [($b:expr) ($a:expr) $($output:tt)*] [+ $($ops:tt)*]) => {{

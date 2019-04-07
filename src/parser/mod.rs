@@ -1,9 +1,13 @@
 mod lexer;
+use lexer::Lexer;
 
+use crate::ccs::*;
+use crate::{ccs, ccs_exp};
+
+use std::collections::BTreeSet;
 use std::fmt;
 use std::io;
-use self::lexer::Lexer;
-use super::*;
+use std::sync::Arc;
 
 pub type Result<T> = ::std::result::Result<T, ParserError>;
 
@@ -45,7 +49,6 @@ pub enum Token {
 
 #[derive(Debug, Clone)]
 pub struct TokenInfo {
-    pub source: String,
     pub row: usize,
     pub col: usize,
     pub token: Token
@@ -56,9 +59,9 @@ pub struct Parser<I: Iterator<Item = io::Result<u8>>> {
 }
 
 impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
-    pub fn new(source: String, input: I) -> Parser<I> {
+    pub fn new(input: I) -> Parser<I> {
         Parser {
-            lexer: Lexer::new(source, input, 2)
+            lexer: Lexer::new(input, 2)
         }
     }
 
