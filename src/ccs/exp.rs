@@ -23,17 +23,17 @@ pub enum BinaryOp {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Exp {
+pub enum Exp<ID: Identifier = String> {
     BoolConst(bool),
     IntConst(i64),
     StrConst(String),
-    IdExp(String),
-    Unary(UnaryOp, Arc<Exp>),
-    Binary(BinaryOp, Arc<Exp>, Arc<Exp>)
+    IdExp(ID),
+    Unary(UnaryOp, Arc<Exp<ID>>),
+    Binary(BinaryOp, Arc<Exp<ID>>, Arc<Exp<ID>>)
 }
 
-impl Exp {
-    pub fn eval(&self) -> Result<Value> {
+impl<ID: Identifier> Exp<ID> {
+    pub fn eval(&self) -> Result<Value, ID> {
         match self {
             Exp::BoolConst(b) =>
                 Ok(Value::Bool(*b)),
@@ -103,7 +103,7 @@ impl Exp {
         }
     }
 
-    pub fn eval_exp(&self) -> Result<Arc<Exp>> {
+    pub fn eval_exp(&self) -> Result<Arc<Exp<ID>>, ID> {
         Ok(match self.eval()? {
             Value::Bool(b) =>
                 Arc::new(Exp::BoolConst(b)),
@@ -114,13 +114,15 @@ impl Exp {
         })
     }
 
-    pub fn subst(this: &Arc<Exp>, var: &str, val: &Value) -> Arc<Exp> {
+    pub fn subst<S>(this: &Arc<Exp<ID>>, var: S, val: &Value) -> Arc<Exp<ID>>
+        where S: Into<ID>
+    {
         let mut subst = HashMap::new();
-        subst.insert(var, val);
+        subst.insert(var.into(), val);
         Exp::subst_map(this, &subst)
     }
 
-    pub fn subst_map(this: &Arc<Exp>, subst: &HashMap<&str, &Value>) -> Arc<Exp> {
+    pub fn subst_map(this: &Arc<Exp<ID>>, subst: &HashMap<ID, &Value>) -> Arc<Exp<ID>> {
         if subst.is_empty() {
             return Arc::clone(this);
         }
@@ -131,7 +133,7 @@ impl Exp {
           | Exp::StrConst(_) =>
                 Arc::clone(this),
             Exp::IdExp(id) =>
-                if let Some(val) = subst.get(&id[..]) {
+                if let Some(val) = subst.get(id) {
                     match val {
                         Value::Bool(b) =>
                             Arc::new(Exp::BoolConst(*b)),
@@ -160,6 +162,40 @@ impl Exp {
                     Arc::new(Exp::Binary(op.clone(), l2, r2))
                 }
             }
+        }
+    }
+
+    pub fn compress(&self, dict: &mut Dict<ID>) -> Arc<Exp<usize>> {
+        match self {
+            Exp::BoolConst(b) =>
+                Arc::new(Exp::BoolConst(*b)),
+            Exp::IntConst(n) =>
+                Arc::new(Exp::IntConst(*n)),
+            Exp::StrConst(s) =>
+                Arc::new(Exp::StrConst(s.clone())),
+            Exp::IdExp(id) =>
+                Arc::new(Exp::IdExp(dict.lookup_insert(id))),
+            Exp::Unary(op, exp) =>
+                Arc::new(Exp::Unary(*op, exp.compress(dict))),
+            Exp::Binary(op, lhs, rhs) =>
+                Arc::new(Exp::Binary(*op, lhs.compress(dict), rhs.compress(dict)))
+        }
+    }
+
+    pub fn uncompress(other: &Exp<usize>, dict: &Dict<ID>) -> Arc<Exp<ID>> {
+        match other {
+            Exp::BoolConst(b) =>
+                Arc::new(Exp::BoolConst(*b)),
+            Exp::IntConst(n) =>
+                Arc::new(Exp::IntConst(*n)),
+            Exp::StrConst(s) =>
+                Arc::new(Exp::StrConst(s.clone())),
+            Exp::IdExp(id) =>
+                Arc::new(Exp::IdExp(dict.index_to_id(*id).clone())),
+            Exp::Unary(op, exp) =>
+                Arc::new(Exp::Unary(*op, Exp::uncompress(exp, dict))),
+            Exp::Binary(op, lhs, rhs) =>
+                Arc::new(Exp::Binary(*op, Exp::uncompress(lhs, dict), Exp::uncompress(rhs, dict)))
         }
     }
 }
@@ -210,7 +246,9 @@ impl fmt::Display for BinaryOp {
     }
 }
 
-impl fmt::Display for Exp {
+impl<ID> fmt::Display for Exp<ID>
+    where ID: Identifier + fmt::Display
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Exp::BoolConst(b) => write!(f, "{}", b),
@@ -220,5 +258,28 @@ impl fmt::Display for Exp {
             Exp::Unary(op, e) => write!(f, "({}{})", op, e),
             Exp::Binary(op, l, r) => write!(f, "({} {} {})", l, op, r)
         }
+    }
+}
+
+impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Exp<usize>>
+    where ID: Identifier + fmt::Display
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            Exp::BoolConst(b) => write!(f, "{}", b),
+            Exp::IntConst(n) => write!(f, "{}", n),
+            Exp::StrConst(s) => write!(f, "{:?}", s),
+            Exp::IdExp(id) => write!(f, "{}", DisplayCompressed(id, &self.1)),
+            Exp::Unary(op, e) => write!(f, "({}{})", op, e),
+            Exp::Binary(op, l, r) => write!(f, "({} {} {})", l, op, r)
+        }
+    }
+}
+
+impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Arc<Exp<usize>>>
+    where ID: Identifier + fmt::Display
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        DisplayCompressed(self.0.as_ref(), self.1).fmt(f)
     }
 }

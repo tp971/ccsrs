@@ -6,107 +6,278 @@ pub use process::*;
 
 use crate::{ccs, ccs_act, ccs_exp};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 use std::fmt;
+use std::hash::Hash;
 use std::sync::Arc;
 
-type Result<T> = std::result::Result<T, Error>;
+pub trait Identifier:
+    Clone + PartialEq + Eq + PartialOrd + Ord + Hash
+{}
 
-pub enum Error {
-    ExpUnbound(String),
+impl<T> Identifier for T
+    where T: Clone + PartialEq + Eq + PartialOrd + Ord + Hash
+{}
+
+#[derive(Debug, Clone)]
+pub struct Dict<ID: Identifier> {
+    id_to_index: HashMap<ID, usize>,
+    index_to_id: Vec<ID>
+}
+
+impl<ID: Identifier> Dict<ID> {
+    pub fn new() -> Dict<ID> {
+        Dict {
+            id_to_index: HashMap::new(),
+            index_to_id: Vec::new()
+        }
+    }
+
+    pub fn lookup_insert(&mut self, id: &ID) -> usize {
+        match self.id_to_index.entry(id.clone()) {
+            Entry::Occupied(v) => *v.get(),
+            Entry::Vacant(v) => {
+                let res = self.index_to_id.len();
+                self.index_to_id.push(id.clone());
+                v.insert(res);
+                res
+            }
+        }
+    }
+
+    pub fn lookup(&self, id: &ID) -> Option<usize> {
+        self.id_to_index.get(id).cloned()
+    }
+
+    pub fn get(&self, i: usize) -> Option<&ID> {
+        self.index_to_id.get(i)
+    }
+
+    pub fn id_to_index(&self, id: &ID) -> usize {
+        *self.id_to_index.get(id).unwrap()
+    }
+
+    pub fn index_to_id(&self, i: usize) -> &ID {
+        &self.index_to_id[i]
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct DisplayCompressed<'a, ID: Identifier, T>(pub &'a T, pub &'a Dict<ID>);
+
+
+
+type Result<T, ID> = std::result::Result<T, Error<ID>>;
+
+#[derive(Debug, Clone)]
+pub enum Error<ID: Identifier> {
+    ExpUnbound(ID),
     ExpUnaryError(UnaryOp, Value),
     ExpBinaryError(BinaryOp, Value, Value),
-    ExpProcessArgs(String, Vec<String>, Vec<Value>),
-    Unbound(String),
-    Unguarded(String),
-    UnrestrictedInput(String),
+    ExpProcessArgs(ID, Vec<ID>, Vec<Value>),
+    Unbound(ID),
+    Unguarded(ID),
+    UnrestrictedInput(ID),
     WhenError(Value)
 }
 
-#[derive(Clone, Debug)]
-pub struct Binding {
-    pub(crate) name: String,
-    pub(crate) args: Vec<String>,
-    pub(crate) process: Arc<Process>
+#[derive(Debug, Clone)]
+pub struct Binding<ID: Identifier = String> {
+    pub(crate) name: ID,
+    pub(crate) args: Vec<ID>,
+    pub(crate) process: Arc<Process<ID>>
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct Program {
-    pub(crate) bindings: HashMap<String, Binding>,
-    pub(crate) process: Option<Arc<Process>>
+#[derive(Debug, Clone, Default)]
+pub struct Program<ID: Identifier = String> {
+    pub(crate) bindings: HashMap<ID, Binding<ID>>,
+    pub(crate) process: Option<Arc<Process<ID>>>
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Transition {
-    pub act: Action,
-    pub to: Arc<Process>
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Transition<ID: Identifier = String> {
+    pub act: Action<ID>,
+    pub to: Arc<Process<ID>>
 }
 
-impl Transition {
-    pub fn new(act: Action, to: Arc<Process>) -> Transition {
-        Transition { act, to }
+
+
+impl<ID: Identifier> Error<ID> {
+    pub fn compress(&self, dict: &mut Dict<ID>) -> Error<usize> {
+        match self {
+            Error::ExpUnbound(id) =>
+                Error::ExpUnbound(dict.lookup_insert(id)),
+            Error::ExpUnaryError(op, val) =>
+                Error::ExpUnaryError(*op, val.clone()),
+            Error::ExpBinaryError(op, l, r) =>
+                Error::ExpBinaryError(*op, l.clone(), r.clone()),
+            Error::ExpProcessArgs(id, args, vals) =>
+                Error::ExpProcessArgs(dict.lookup_insert(id),
+                    args.iter().map(|id| dict.lookup_insert(id)).collect(),
+                    vals.clone()),
+            Error::Unbound(id) =>
+                Error::Unbound(dict.lookup_insert(id)),
+            Error::Unguarded(id) =>
+                Error::Unguarded(dict.lookup_insert(id)),
+            Error::UnrestrictedInput(id) =>
+                Error::UnrestrictedInput(dict.lookup_insert(id)),
+            Error::WhenError(val) =>
+                Error::WhenError(val.clone())
+        }
+    }
+
+    pub fn uncompress(other: &Error<usize>, dict: &Dict<ID>) -> Error<ID> {
+        match other {
+            Error::ExpUnbound(id) =>
+                Error::ExpUnbound(dict.index_to_id(*id).clone()),
+            Error::ExpUnaryError(op, val) =>
+                Error::ExpUnaryError(*op, val.clone()),
+            Error::ExpBinaryError(op, l, r) =>
+                Error::ExpBinaryError(*op, l.clone(), r.clone()),
+            Error::ExpProcessArgs(id, args, vals) =>
+                Error::ExpProcessArgs(dict.index_to_id(*id).clone(),
+                    args.iter().map(|id| dict.index_to_id(*id).clone()).collect(),
+                    vals.clone()),
+            Error::Unbound(id) =>
+                Error::Unbound(dict.index_to_id(*id).clone()),
+            Error::Unguarded(id) =>
+                Error::Unguarded(dict.index_to_id(*id).clone()),
+            Error::UnrestrictedInput(id) =>
+                Error::UnrestrictedInput(dict.index_to_id(*id).clone()),
+            Error::WhenError(val) =>
+                Error::WhenError(val.clone())
+        }
     }
 }
 
-impl Binding {
-    pub fn new(name: String, args: Vec<String>, process: Arc<Process>) -> Binding {
+impl<ID: Identifier> Binding<ID> {
+    pub fn new(name: ID, args: Vec<ID>, process: Arc<Process<ID>>) -> Binding<ID> {
         Binding { name, args, process }
     }
 
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &ID {
         &self.name
     }
 
-    pub fn args(&self) -> &Vec<String> {
+    pub fn args(&self) -> &[ID] {
         &self.args
     }
 
-    pub fn process(&self) -> &Arc<Process> {
+    pub fn process(&self) -> &Arc<Process<ID>> {
         &self.process
     }
 
-    pub fn instantiate(&self, args: &Vec<Value>) -> Result<Arc<Process>> {
+    pub fn instantiate(&self, args: &[Value]) -> Result<Arc<Process<ID>>, ID> {
         if args.len() != self.args.len() {
-            return Err(Error::ExpProcessArgs(self.name.clone(), self.args.clone(), args.clone()));
+            return Err(Error::ExpProcessArgs(self.name.clone(), self.args.clone(), args.to_vec()));
         }
 
         let mut subst = HashMap::new();
         for (name, arg) in self.args.iter().zip(args.iter()) {
-            subst.insert(&name[..], arg);
+            subst.insert(name.clone(), arg);
         }
         Ok(Process::subst_map(&self.process, &subst))
     }
+
+    pub fn compress(&self, dict: &mut Dict<ID>) -> Binding<usize> {
+        Binding {
+            name: dict.lookup_insert(&self.name),
+            args: self.args.iter().map(|id| dict.lookup_insert(id)).collect(),
+            process: self.process.compress(dict)
+        }
+    }
+
+    pub fn uncompress(other: &Binding<usize>, dict: &Dict<ID>) -> Binding<ID> {
+        Binding {
+            name: dict.index_to_id(other.name).clone(),
+            args: other.args.iter()
+                .map(|id| dict.index_to_id(*id).clone()).collect(),
+            process: Process::uncompress(&other.process, dict)
+        }
+    }
 }
 
-impl Program {
-    pub fn new() -> Program {
+impl<ID: Identifier> Program<ID> {
+    pub fn new() -> Program<ID> {
         Program { bindings: HashMap::new(), process: None }
     }
 
-    pub fn add_binding(&mut self, binding: Binding) {
+    pub fn add_binding(&mut self, binding: Binding<ID>) {
         self.bindings.insert(binding.name.clone(), binding);
     }
 
-    pub fn binding(&self, name: &str) -> Option<&Binding> {
+    pub fn binding(&self, name: &ID) -> Option<&Binding<ID>> {
         self.bindings.get(name)
     }
 
-    pub fn bindings(&self) -> &HashMap<String, Binding> {
+    pub fn bindings(&self) -> &HashMap<ID, Binding<ID>> {
         &self.bindings
     }
 
-    pub fn set_process(&mut self, process: Arc<Process>) {
+    pub fn set_process(&mut self, process: Arc<Process<ID>>) {
         self.process.replace(process);
     }
 
-    pub fn process(&self) -> Option<Arc<Process>> {
+    pub fn process(&self) -> Option<Arc<Process<ID>>> {
         self.process.clone()
+    }
+
+    pub fn compress(&self, dict: &mut Dict<ID>) -> Program<usize> {
+        Program {
+            bindings: self.bindings.iter()
+                .map(|(id, bind)|
+                    (dict.lookup_insert(id), bind.compress(dict))
+                )
+                .collect(),
+            process: self.process.as_ref().map(|p| p.compress(dict))
+        }
+    }
+
+    pub fn uncompress(other: &Program<usize>, dict: &Dict<ID>) -> Program<ID> {
+        Program {
+            bindings: other.bindings.iter()
+                .map(|(id, bind)|
+                    (dict.index_to_id(*id).clone(), Binding::uncompress(bind, dict))
+                )
+                .collect(),
+            process: other.process.as_ref().map(|p| Process::uncompress(p, dict))
+        }
+    }
+}
+
+impl<ID: Identifier> Transition<ID> {
+    pub fn new(act: Action<ID>, to: Arc<Process<ID>>) -> Transition<ID> {
+        Transition { act, to }
+    }
+
+    pub fn compress(&self, dict: &mut Dict<ID>) -> Transition<usize> {
+        Transition {
+            act: self.act.compress(dict),
+            to: self.to.compress(dict)
+        }
+    }
+
+    pub fn uncompress(other: &Transition<usize>, dict: &Dict<ID>) -> Transition<ID> {
+        Transition {
+            act: Action::uncompress(&other.act, dict),
+            to: Process::uncompress(&other.to, dict)
+        }
     }
 }
 
 
 
-impl fmt::Display for Error {
+impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, usize>
+    where ID: Identifier + fmt::Display
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.1.index_to_id(*self.0))
+    }
+}
+
+impl<ID> fmt::Display for Error<ID>
+    where ID: Identifier + fmt::Display
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::ExpUnbound(id) =>
@@ -150,7 +321,55 @@ impl fmt::Display for Error {
     }
 }
 
-impl fmt::Display for Binding {
+impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Error<usize>>
+    where ID: Identifier + fmt::Display
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            Error::ExpUnbound(id) =>
+                write!(f, "unbound identifier: {}", DisplayCompressed(id, self.1)),
+            Error::ExpUnaryError(op, val) =>
+                write!(f, "type error on unary expression: {} {}", op, val),
+            Error::ExpBinaryError(op, l, r) =>
+                write!(f, "type error on binary expression: {} {} {}", l, op, r),
+            Error::ExpProcessArgs(name, args, values) => {
+                write!(f, "non matching process arguments: {}[", DisplayCompressed(name, self.1))?;
+                for (i, next) in args.iter().enumerate() {
+                    if i == 0 {
+                        write!(f, "{}", DisplayCompressed(next, self.1))?;
+                    } else {
+                        write!(f, ", {}", DisplayCompressed(next, self.1))?;
+                    }
+                }
+                if values.is_empty() {
+                    write!(f, "] was instantiated without any arguments")
+                } else {
+                    write!(f, "] was instantiated with ")?;
+                    for (i, next) in values.iter().enumerate() {
+                        if i == 0 {
+                            write!(f, "{}", next)?;
+                        } else {
+                            write!(f, ", {}", next)?;
+                        }
+                    }
+                    Ok(())
+                }
+            },
+            Error::Unbound(name) =>
+                write!(f, "unbound process `{}`", DisplayCompressed(name, self.1)),
+            Error::Unguarded(name) =>
+                write!(f, "unguarded recursion in process `{}`", DisplayCompressed(name, self.1)),
+            Error::UnrestrictedInput(var) =>
+                write!(f, "unrestricted input variable `{}`", DisplayCompressed(var, self.1)),
+            Error::WhenError(val) =>
+                write!(f, "non boolean type on when process: {}", val)
+        }
+    }
+}
+
+impl<ID> fmt::Display for Binding<ID>
+    where ID: Identifier + fmt::Display
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.args.is_empty() {
             write!(f, "{} := {}", self.name, self.process)
@@ -168,7 +387,29 @@ impl fmt::Display for Binding {
     }
 }
 
-impl fmt::Display for Program {
+impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Binding<usize>>
+    where ID: Identifier + fmt::Display
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.0.args.is_empty() {
+            write!(f, "{} := {}", DisplayCompressed(&self.0.name, self.1), DisplayCompressed(self.0.process.as_ref(), self.1))
+        } else {
+            write!(f, "{}[", DisplayCompressed(&self.0.name, self.1))?;
+            for (i, next) in self.0.args.iter().enumerate() {
+                if i == 0 {
+                    write!(f, "{}", DisplayCompressed(next, self.1))?;
+                } else {
+                    write!(f, ", {}", DisplayCompressed(next, self.1))?;
+                }
+            }
+            write!(f, "] := {}", DisplayCompressed(self.0.process.as_ref(), self.1))
+        }
+    }
+}
+
+impl<ID> fmt::Display for Program<ID>
+    where ID: Identifier + fmt::Display
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for next in self.bindings.values() {
             writeln!(f, "{}", next)?;
@@ -180,8 +421,32 @@ impl fmt::Display for Program {
     }
 }
 
-impl fmt::Display for Transition {
+impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Program<usize>>
+    where ID: Identifier + fmt::Display
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for next in self.0.bindings.values() {
+            writeln!(f, "{}", DisplayCompressed(next, self.1))?;
+        }
+        if let Some(process) = &self.0.process {
+            write!(f, "\n{}", DisplayCompressed(process.as_ref(), self.1))?;
+        }
+        Ok(())
+    }
+}
+
+impl<ID> fmt::Display for Transition<ID>
+    where ID: Identifier + fmt::Display
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "--( {} )-> {}", self.act, self.to)
+    }
+}
+
+impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Transition<usize>>
+    where ID: Identifier + fmt::Display
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "--( {} )-> {}", DisplayCompressed(&self.0.act, self.1), DisplayCompressed(self.0.to.as_ref(), self.1))
     }
 }

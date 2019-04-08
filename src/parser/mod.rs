@@ -73,7 +73,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
         self.lexer.skipline();
     }
 
-    pub fn parse_program(&mut self) -> Result<Program> {
+    pub fn parse_program(&mut self) -> Result<Program<String>> {
         let mut res = Program::new();
         loop {
             let next = self.parse_process(0)?;
@@ -109,7 +109,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
         }
     }
 
-    pub fn parse_process(&mut self, prec: i16) -> Result<Arc<Process>> {
+    pub fn parse_process(&mut self, prec: i16) -> Result<Arc<Process<String>>> {
         let mut acts = Vec::new();
         loop {
             match (self.lexer.peek(0)?.token, self.lexer.peek(1)?.token) {
@@ -367,7 +367,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
         }
     }
 
-    pub fn parse_exp(&mut self, prec: i16) -> Result<Arc<Exp>> {
+    pub fn parse_exp(&mut self, prec: i16) -> Result<Arc<Exp<String>>> {
         let t = self.lexer.peek(0)?;
         let mut res = match t.token {
             Token::PLUS => {
