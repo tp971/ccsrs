@@ -9,22 +9,22 @@ pub enum Action<ID: Identifier = String> {
     Tau,
     Delta,
     Act(ID),
-    Snd(ID, Option<Arc<Exp<ID>>>, Option<Arc<Exp<ID>>>),
-    Recv(ID, Option<Arc<Exp<ID>>>, Option<Arc<Exp<ID>>>),
-    RecvInto(ID, Option<Arc<Exp<ID>>>, ID)
+    Snd(ID, Option<Exp<ID>>, Option<Exp<ID>>),
+    Recv(ID, Option<Exp<ID>>, Option<Exp<ID>>),
+    RecvInto(ID, Option<Exp<ID>>, ID)
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Process<ID: Identifier = String> {
     Null,
     Term,
-    Name(ID, Vec<Arc<Exp<ID>>>),
+    Name(ID, Vec<Exp<ID>>),
     Prefix(Action<ID>, Arc<Process<ID>>),
     Choice(Arc<Process<ID>>, Arc<Process<ID>>),
     Parallel(Arc<Process<ID>>, Arc<Process<ID>>),
     Sequential(Arc<Process<ID>>, Arc<Process<ID>>),
     Restrict(Arc<Process<ID>>, bool, BTreeSet<ID>), //process, complement, restriction set
-    When(Arc<Exp<ID>>, Arc<Process<ID>>)
+    When(Exp<ID>, Arc<Process<ID>>)
 }
 
 pub enum Side {
@@ -144,21 +144,21 @@ impl<ID: Identifier> Action<ID> {
                 Ok(self.clone()),
 
             Action::Snd(name, None, Some(exp)) =>
-                Ok(Action::Snd(name.clone(), None, Some(exp.eval_exp()?))),
+                Ok(Action::Snd(name.clone(), None, Some(exp.eval()?.into()))),
             Action::Snd(name, Some(param), None) =>
-                Ok(Action::Snd(name.clone(), Some(param.eval_exp()?), None)),
+                Ok(Action::Snd(name.clone(), Some(param.eval()?.into()), None)),
             Action::Snd(name, Some(param), Some(exp)) =>
-                Ok(Action::Snd(name.clone(), Some(param.eval_exp()?), Some(exp.eval_exp()?))),
+                Ok(Action::Snd(name.clone(), Some(param.eval()?.into()), Some(exp.eval()?.into()))),
 
             Action::Recv(name, None, Some(exp)) =>
-                Ok(Action::Recv(name.clone(), None, Some(exp.eval_exp()?))),
+                Ok(Action::Recv(name.clone(), None, Some(exp.eval()?.into()))),
             Action::Recv(name, Some(param), None) =>
-                Ok(Action::Recv(name.clone(), Some(param.eval_exp()?), None)),
+                Ok(Action::Recv(name.clone(), Some(param.eval()?.into()), None)),
             Action::Recv(name, Some(param), Some(exp)) =>
-                Ok(Action::Recv(name.clone(), Some(param.eval_exp()?), Some(exp.eval_exp()?))),
+                Ok(Action::Recv(name.clone(), Some(param.eval()?.into()), Some(exp.eval()?.into()))),
 
             Action::RecvInto(name, Some(param), var) =>
-                Ok(Action::RecvInto(name.clone(), Some(param.eval_exp()?), var.clone()))
+                Ok(Action::RecvInto(name.clone(), Some(param.eval()?.into()), var.clone()))
         }
     }
 
@@ -217,7 +217,7 @@ impl<ID: Identifier> Action<ID> {
 
 impl<ID: Identifier> Process<ID> {
     pub fn get_transitions(&self, program: &Program<ID>) -> Result<HashSet<Transition<ID>>, ID> {
-        let trans = self._get_transitions(program, HashSet::new())?;
+        let trans = self._get_transitions(program, &mut HashSet::new())?;
         let mut res = HashSet::new();
         for next in trans.into_iter() {
             if let Action::RecvInto(name, _, _) = &next.act {
@@ -228,7 +228,7 @@ impl<ID: Identifier> Process<ID> {
         Ok(res)
     }
 
-    fn _get_transitions(&self, program: &Program<ID>, mut seen: HashSet<ID>) -> Result<Vec<Transition<ID>>, ID> {
+    fn _get_transitions(&self, program: &Program<ID>, seen: &mut HashSet<ID>) -> Result<Vec<Transition<ID>>, ID> {
         match self {
             Process::Null => {
                 Ok(Vec::new())
@@ -236,7 +236,7 @@ impl<ID: Identifier> Process<ID> {
             Process::Term => {
                 let mut set = Vec::new();
                 set.push(Transition::new(
-                    ccs_act!{ e }, ccs!{ 0 }));
+                    ccs_act!{ e }, Arc::new(ccs!{ 0 })));
                 Ok(set)
             },
             Process::Name(name, args) => {
@@ -245,12 +245,15 @@ impl<ID: Identifier> Process<ID> {
                 }
                 match program.binding(name) {
                     Some(bind) => {
+                        //let mut seen = seen.clone();
                         seen.insert(name.clone());
                         let mut values = Vec::new();
                         for next in args {
                             values.push(next.eval()?);
                         }
-                        Ok(bind.instantiate(&values)?._get_transitions(program, seen)?)
+                        let res = bind.instantiate(&values)?._get_transitions(program, seen)?;
+                        seen.remove(name);
+                        Ok(res)
                     },
                     None =>
                         Err(Error::Unbound(name.clone()))
@@ -265,7 +268,7 @@ impl<ID: Identifier> Process<ID> {
             },
             Process::Choice(l, r) => {
                 let mut set = Vec::new();
-                for next in l._get_transitions(program, seen.clone())? {
+                for next in l._get_transitions(program, seen)? {
                     set.push(Transition::new(
                         next.act, next.to
                     ));
@@ -279,7 +282,7 @@ impl<ID: Identifier> Process<ID> {
             },
             Process::Parallel(l, r) => {
                 let mut set = Vec::new();
-                let trans_l = l._get_transitions(program, seen.clone())?;
+                let trans_l = l._get_transitions(program, seen)?;
                 let trans_r = r._get_transitions(program, seen)?;
                 for l in trans_l.iter() {
                     for r in trans_r.iter() {
@@ -288,26 +291,38 @@ impl<ID: Identifier> Process<ID> {
                             Some(None) => {
                                 //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
-                                    ccs_act!{ i }, ccs!{ @{Arc::clone(&l.to)} | @{Arc::clone(&r.to)} }
+                                    ccs_act!{ i }, Arc::new(Process::Parallel(
+                                        Arc::clone(&l.to),
+                                        Arc::clone(&r.to)
+                                    ))
                                 ));
                             },
                             Some(Some((Side::Left, var, val))) => {
                                 //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
-                                    ccs_act!{ i }, ccs!{ @{Process::subst(&l.to, var.clone(), &val)} | @{Arc::clone(&r.to)} }
+                                    ccs_act!{ i }, Arc::new(Process::Parallel(
+                                        Arc::new(l.to.subst(var.clone(), &val)),
+                                        Arc::clone(&r.to)
+                                    ))
                                 ));
                             },
                             Some(Some((Side::Right, var, val))) => {
                                 //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
-                                    ccs_act!{ i }, ccs!{ @{Arc::clone(&l.to)} | @{Process::subst(&r.to, var.clone(), &val)} }
+                                    ccs_act!{ i }, Arc::new(Process::Parallel(
+                                        Arc::clone(&l.to),
+                                        Arc::new(r.to.subst(var.clone(), &val))
+                                    ))
                                 ));
                             }
                         }
 
                         if let (Action::Delta, Action::Delta) = (&l.act, &r.act) {
                             set.push(Transition::new(
-                                ccs_act!{ e }, ccs!{ @{Arc::clone(&l.to)} | @{Arc::clone(&r.to)} }
+                                ccs_act!{ e }, Arc::new(Process::Parallel(
+                                    Arc::clone(&l.to),
+                                    Arc::clone(&r.to)
+                                ))
                             ));
                         }
                     }
@@ -317,7 +332,9 @@ impl<ID: Identifier> Process<ID> {
                         continue;
                     }
                     set.push(Transition::new(
-                        next.act, ccs!{ @{next.to} | @{Arc::clone(r)} }
+                        next.act, Arc::new(Process::Parallel(
+                            next.to, Arc::clone(r)
+                        ))
                     ));
                 }
                 for next in trans_r {
@@ -325,7 +342,9 @@ impl<ID: Identifier> Process<ID> {
                         continue;
                     }
                     set.push(Transition::new(
-                        next.act, ccs!{ @{Arc::clone(l)} | @{next.to} }
+                        next.act, Arc::new(Process::Parallel(
+                            Arc::clone(l), next.to
+                        ))
                     ));
                 }
                 Ok(set)
@@ -335,11 +354,11 @@ impl<ID: Identifier> Process<ID> {
                 for next in l._get_transitions(program, seen)? {
                     if let Action::Delta = next.act {
                         set.push(Transition::new(
-                            ccs_act!{ i }, Arc::clone(&r)
+                            ccs_act!{ i }, Arc::clone(r)
                         ));
                     } else {
                         set.push(Transition::new(
-                            next.act, ccs!{ @{next.to}; @{Arc::clone(&r)} }
+                            next.act, Arc::new(Process::Sequential(next.to, Arc::clone(r)))
                         ));
                     }
                 }
@@ -376,166 +395,201 @@ impl<ID: Identifier> Process<ID> {
         }
     }
 
-    pub fn subst<S>(this: &Arc<Process<ID>>, var: S, val: &Value) -> Arc<Process<ID>>
+    pub fn subst<S>(&self, var: S, val: &Value) -> Process<ID>
         where S: Into<ID>
     {
         let mut subst = HashMap::new();
         subst.insert(var.into(), val);
-        Process::subst_map(this, &subst)
+        self.subst_map_opt(&subst).unwrap_or_else(|| self.clone())
     }
 
-    pub fn subst_map(this: &Arc<Process<ID>>, subst: &HashMap<ID, &Value>) -> Arc<Process<ID>> {
+    pub fn subst_map(&self, subst: &HashMap<ID, &Value>) -> Process<ID> {
+        self.subst_map_opt(subst).unwrap_or_else(|| self.clone())
+    }
+
+    pub fn subst_opt<S>(&self, var: S, val: &Value) -> Option<Process<ID>>
+        where S: Into<ID>
+    {
+        let mut subst = HashMap::new();
+        subst.insert(var.into(), val);
+        self.subst_map_opt(&subst)
+    }
+
+    pub fn subst_map_opt(&self, subst: &HashMap<ID, &Value>) -> Option<Process<ID>> {
         if subst.is_empty() {
-            return Arc::clone(this);
+            return None;
         }
 
-        match this.as_ref() {
+        match self {
             Process::Null =>
-                Arc::clone(this),
+                None,
             Process::Term =>
-                Arc::clone(this),
+                None,
             Process::Name(name, args) => {
                 let mut args2 = Vec::new();
                 let mut new = false;
                 for next in args {
-                    let next2 = Exp::subst_map(next, subst);
-                    if !new && !Arc::ptr_eq(&next2, next) {
-                        new = true;
+                    match next.subst_map_opt(subst) {
+                        None =>
+                            args2.push(next.clone()),
+                        Some(next2) => {
+                            new = true;
+                            args2.push(next2);
+                        }
                     }
-                    args2.push(next2);
                 }
                 if new {
-                    Arc::new(Process::Name(name.clone(), args2))
+                    Some(Process::Name(name.clone(), args2))
                 } else {
-                    Arc::clone(this)
+                    None
                 }
             },
             Process::Prefix(Action::RecvInto(name, None, var), p) => {
                 let mut subst2 = subst.clone();
                 subst2.remove(var);
-                let p2 = Process::subst_map(p, &subst2);
 
-                if Arc::ptr_eq(&p2, &p) {
-                    Arc::clone(this)
-                } else {
-                    ccs!{ @{Action::RecvInto(name.clone(), None, var.clone())}.@{p2} }
+                match p.subst_map_opt(&subst2) {
+                    None =>
+                        None,
+                    Some(p2) =>
+                        Some(Process::Prefix(
+                            Action::RecvInto(name.clone(), None, var.clone()),
+                            Arc::new(p2)
+                        ))
                 }
             },
             Process::Prefix(Action::RecvInto(name, Some(param), var), p) => {
-                let param2 = Exp::subst_map(param, subst);
                 let mut subst2 = subst.clone();
                 subst2.remove(var);
-                let p2 = Process::subst_map(p, &subst2);
 
-                if Arc::ptr_eq(&p2, &p) && Arc::ptr_eq(&param2, &param) {
-                    Arc::clone(this)
-                } else {
-                    ccs!{ @{Action::RecvInto(name.clone(), Some(param2), var.clone())} . @{p2} }
+                match (param.subst_map_opt(subst), p.subst_map_opt(&subst2)) {
+                    (None, None) =>
+                        None,
+                    (param2, p2) => {
+                        let param2 = param2.map_or_else(|| param.clone(), |exp| exp);
+                        let p2 = p2.map_or_else(|| Arc::clone(p), |p| Arc::new(p));
+                        Some(Process::Prefix(
+                            Action::RecvInto(name.clone(), Some(param2), var.clone()),
+                            p2
+                        ))
+                    }
                 }
             },
             Process::Prefix(act, p) => {
                 let act2 = act.subst_map(subst);
-                let p2 = Process::subst_map(p, subst);
-                if act2 == *act && Arc::ptr_eq(&p2, &p) {
-                    Arc::clone(this)
-                } else {
-                    ccs!{ @{act2}.@{p2} }
+                match p.subst_map_opt(subst) {
+                    None =>
+                        if act2 == *act {
+                            None
+                        } else {
+                            Some(Process::Prefix(act2, Arc::clone(p)))
+                        },
+                    Some(p2) =>
+                        Some(Process::Prefix(act2, Arc::new(p2)))
                 }
             }
             Process::Choice(l, r) => {
-                let l2 = Process::subst_map(l, subst);
-                let r2 = Process::subst_map(r, subst);
-                if Arc::ptr_eq(&l2, &l) && Arc::ptr_eq(&r2, &r) {
-                    Arc::clone(this)
-                } else {
-                    ccs!{ @{l2} + @{r2} }
+                match (l.subst_map_opt(subst), r.subst_map_opt(subst)) {
+                    (None, None) =>
+                        None,
+                    (l2, r2) => {
+                        let l2 = l2.map_or_else(|| Arc::clone(l), |l2| Arc::new(l2));
+                        let r2 = r2.map_or_else(|| Arc::clone(r), |r2| Arc::new(r2));
+                        Some(Process::Choice(l2, r2))
+                    }
                 }
             },
             Process::Parallel(l, r) => {
-                let l2 = Process::subst_map(l, subst);
-                let r2 = Process::subst_map(r, subst);
-                if Arc::ptr_eq(&l2, &l) && Arc::ptr_eq(&r2, &r) {
-                    Arc::clone(this)
-                } else {
-                    ccs!{ @{l2} | @{r2} }
+                match (l.subst_map_opt(subst), r.subst_map_opt(subst)) {
+                    (None, None) =>
+                        None,
+                    (l2, r2) => {
+                        let l2 = l2.map_or_else(|| Arc::clone(l), |l2| Arc::new(l2));
+                        let r2 = r2.map_or_else(|| Arc::clone(r), |r2| Arc::new(r2));
+                        Some(Process::Parallel(l2, r2))
+                    }
                 }
             },
             Process::Sequential(l, r) => {
-                let l2 = Process::subst_map(l, subst);
-                let r2 = Process::subst_map(r, subst);
-                if Arc::ptr_eq(&l2, &l) && Arc::ptr_eq(&r2, &r) {
-                    Arc::clone(this)
-                } else {
-                    ccs!{ @{l2}; @{r2} }
+                match (l.subst_map_opt(subst), r.subst_map_opt(subst)) {
+                    (None, None) =>
+                        None,
+                    (l2, r2) => {
+                        let l2 = l2.map_or_else(|| Arc::clone(l), |l2| Arc::new(l2));
+                        let r2 = r2.map_or_else(|| Arc::clone(r), |r2| Arc::new(r2));
+                        Some(Process::Sequential(l2, r2))
+                    }
                 }
             },
             Process::Restrict(p, comp, set) => {
-                let p2 = Process::subst_map(p, subst);
-                if Arc::ptr_eq(&p2, &p) {
-                    Arc::clone(this)
-                } else {
-                    Arc::new(Process::Restrict(p2, *comp, set.clone()))
+                match p.subst_map_opt(subst) {
+                    None =>
+                        None,
+                    Some(p2) =>
+                        Some(Process::Restrict(Arc::new(p2), *comp, set.clone()))
                 }
             }
             Process::When(cond, p) => {
-                let cond2 = Exp::subst_map(cond, subst);
-                let p2 = Process::subst_map(p, subst);
-                if Arc::ptr_eq(&cond2, &cond) && Arc::ptr_eq(&p2, &p) {
-                    Arc::clone(this)
-                } else {
-                    ccs!{ when (@{cond2}) @{p2} }
+                match (cond.subst_map_opt(subst), p.subst_map_opt(subst)) {
+                    (None, None) =>
+                        None,
+                    (cond2, p2) => {
+                        let cond2 = cond2.map_or_else(|| cond.clone(), |cond2| cond2);
+                        let p2 = p2.map_or_else(|| Arc::clone(p), |p2| Arc::new(p2));
+                        Some(Process::When(cond2, p2))
+                    }
                 }
             }
         }
     }
 
-    pub fn compress(&self, dict: &mut Dict<ID>) -> Arc<Process<usize>> {
+    pub fn compress(&self, dict: &mut Dict<ID>) -> Process<usize> {
         match self {
             Process::Null =>
-                Arc::new(Process::Null),
+                Process::Null,
             Process::Term =>
-                Arc::new(Process::Term),
+                Process::Term,
             Process::Name(id, args) =>
-                Arc::new(Process::Name(dict.lookup_insert(id),
-                    args.iter().map(|e| e.compress(dict)).collect())),
+                Process::Name(dict.lookup_insert(id),
+                    args.iter().map(|e| e.compress(dict)).collect()),
             Process::Prefix(act, p) =>
-                Arc::new(Process::Prefix(act.compress(dict), p.compress(dict))),
+                Process::Prefix(act.compress(dict), Arc::new(p.compress(dict))),
             Process::Choice(l, r) =>
-                Arc::new(Process::Choice(l.compress(dict), r.compress(dict))),
+                Process::Choice(Arc::new(l.compress(dict)), Arc::new(r.compress(dict))),
             Process::Parallel(l, r) =>
-                Arc::new(Process::Parallel(l.compress(dict), r.compress(dict))),
+                Process::Parallel(Arc::new(l.compress(dict)), Arc::new(r.compress(dict))),
             Process::Sequential(l, r) =>
-                Arc::new(Process::Sequential(l.compress(dict), r.compress(dict))),
+                Process::Sequential(Arc::new(l.compress(dict)), Arc::new(r.compress(dict))),
             Process::Restrict(p, comp, set) =>
-                Arc::new(Process::Restrict(p.compress(dict), *comp,
-                    set.iter().map(|id| dict.lookup_insert(id)).collect())),
+                Process::Restrict(Arc::new(p.compress(dict)), *comp,
+                    set.iter().map(|id| dict.lookup_insert(id)).collect()),
             Process::When(cond, p) =>
-                Arc::new(Process::When(cond.compress(dict), p.compress(dict)))
+                Process::When(cond.compress(dict), Arc::new(p.compress(dict)))
         }
     }
 
-    pub fn uncompress(other: &Process<usize>, dict: &Dict<ID>) -> Arc<Process<ID>> {
+    pub fn uncompress(other: &Process<usize>, dict: &Dict<ID>) -> Process<ID> {
         match other {
             Process::Null =>
-                Arc::new(Process::Null),
+                Process::Null,
             Process::Term =>
-                Arc::new(Process::Term),
+                Process::Term,
             Process::Name(id, args) =>
-                Arc::new(Process::Name(dict.index_to_id(*id).clone(),
-                    args.iter().map(|e| Exp::uncompress(e, dict)).collect())),
+                Process::Name(dict.index_to_id(*id).clone(),
+                    args.iter().map(|e| Exp::uncompress(e, dict)).collect()),
             Process::Prefix(act, p) =>
-                Arc::new(Process::Prefix(Action::uncompress(act, dict), Process::uncompress(p, dict))),
+                Process::Prefix(Action::uncompress(act, dict), Arc::new(Process::uncompress(p, dict))),
             Process::Choice(l, r) =>
-                Arc::new(Process::Choice(Process::uncompress(l, dict), Process::uncompress(r, dict))),
+                Process::Choice(Arc::new(Process::uncompress(l, dict)), Arc::new(Process::uncompress(r, dict))),
             Process::Parallel(l, r) =>
-                Arc::new(Process::Parallel(Process::uncompress(l, dict), Process::uncompress(r, dict))),
+                Process::Parallel(Arc::new(Process::uncompress(l, dict)), Arc::new(Process::uncompress(r, dict))),
             Process::Sequential(l, r) =>
-                Arc::new(Process::Sequential(Process::uncompress(l, dict), Process::uncompress(r, dict))),
+                Process::Sequential(Arc::new(Process::uncompress(l, dict)), Arc::new(Process::uncompress(r, dict))),
             Process::Restrict(p, comp, set) =>
-                Arc::new(Process::Restrict(Process::uncompress(p, dict), *comp,
-                    set.iter().map(|id| dict.index_to_id(*id).clone()).collect())),
+                Process::Restrict(Arc::new(Process::uncompress(p, dict)), *comp,
+                    set.iter().map(|id| dict.index_to_id(*id).clone()).collect()),
             Process::When(cond, p) =>
-                Arc::new(Process::When(Exp::uncompress(cond, dict), Process::uncompress(p, dict)))
+                Process::When(Exp::uncompress(cond, dict), Arc::new(Process::uncompress(p, dict)))
         }
     }
 }
@@ -617,21 +671,21 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Action<usize>>
             Action::Snd(name, None, Some(exp)) =>
                 write!(f, "{}!{}", DisplayCompressed(name, &self.1), exp),
             Action::Snd(name, Some(param), None) =>
-                write!(f, "{}({})!", DisplayCompressed(name, &self.1), DisplayCompressed(param.as_ref(), &self.1)),
+                write!(f, "{}({})!", DisplayCompressed(name, &self.1), DisplayCompressed(param, &self.1)),
             Action::Snd(name, Some(param), Some(exp)) =>
-                write!(f, "{}({})!{}", DisplayCompressed(name, &self.1), DisplayCompressed(param.as_ref(), &self.1), DisplayCompressed(exp.as_ref(), &self.1)),
+                write!(f, "{}({})!{}", DisplayCompressed(name, &self.1), DisplayCompressed(param, &self.1), DisplayCompressed(exp, &self.1)),
             Action::Recv(name, None, None) =>
                 write!(f, "{}?", DisplayCompressed(name, &self.1)),
             Action::Recv(name, None, Some(exp)) =>
-                write!(f, "{}?({})", DisplayCompressed(name, &self.1), DisplayCompressed(exp.as_ref(), &self.1)),
+                write!(f, "{}?({})", DisplayCompressed(name, &self.1), DisplayCompressed(exp, &self.1)),
             Action::Recv(name, Some(param), None) =>
-                write!(f, "{}({})?", DisplayCompressed(name, &self.1), DisplayCompressed(param.as_ref(), &self.1)),
+                write!(f, "{}({})?", DisplayCompressed(name, &self.1), DisplayCompressed(param, &self.1)),
             Action::Recv(name, Some(param), Some(exp)) =>
-                write!(f, "{}({})?({})", DisplayCompressed(name, &self.1), DisplayCompressed(param.as_ref(), &self.1), DisplayCompressed(exp.as_ref(), &self.1)),
+                write!(f, "{}({})?({})", DisplayCompressed(name, &self.1), DisplayCompressed(param, &self.1), DisplayCompressed(exp, &self.1)),
             Action::RecvInto(name, None, var) =>
                 write!(f, "{}?{}", DisplayCompressed(name, &self.1), DisplayCompressed(var, &self.1)),
             Action::RecvInto(name, Some(param), var) =>
-                write!(f, "{}({})?{}", DisplayCompressed(name, &self.1), DisplayCompressed(param.as_ref(), &self.1), DisplayCompressed(var, &self.1)),
+                write!(f, "{}({})?{}", DisplayCompressed(name, &self.1), DisplayCompressed(param, &self.1), DisplayCompressed(var, &self.1)),
         }
     }
 }
@@ -703,9 +757,9 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Process<usize>>
                     write!(f, "{}[", DisplayCompressed(name, &self.1))?;
                     for (i, next) in args.iter().enumerate() {
                         if i == 0 {
-                            write!(f, "{}", DisplayCompressed(next.as_ref(), &self.1))?;
+                            write!(f, "{}", DisplayCompressed(next, &self.1))?;
                         } else {
-                            write!(f, ", {}", DisplayCompressed(next.as_ref(), &self.1))?;
+                            write!(f, ", {}", DisplayCompressed(next, &self.1))?;
                         }
                     }
                     write!(f, "]")
@@ -733,7 +787,7 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Process<usize>>
                 write!(f, "}}")
             },
             Process::When(cond, p) =>
-                write!(f, "when {} {}", DisplayCompressed(cond.as_ref(), &self.1), DisplayCompressed(p.as_ref(), &self.1))
+                write!(f, "when {} {}", DisplayCompressed(cond, &self.1), DisplayCompressed(p.as_ref(), &self.1))
         }
     }
 }

@@ -4,7 +4,7 @@ pub use exp::*;
 mod process;
 pub use process::*;
 
-use crate::{ccs, ccs_act, ccs_exp};
+use crate::{ccs, ccs_act};
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::fmt;
@@ -85,13 +85,13 @@ pub enum Error<ID: Identifier> {
 pub struct Binding<ID: Identifier = String> {
     pub(crate) name: ID,
     pub(crate) args: Vec<ID>,
-    pub(crate) process: Arc<Process<ID>>
+    pub(crate) process: Process<ID>
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct Program<ID: Identifier = String> {
     pub(crate) bindings: HashMap<ID, Binding<ID>>,
-    pub(crate) process: Option<Arc<Process<ID>>>
+    pub(crate) process: Option<Process<ID>>
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -151,7 +151,7 @@ impl<ID: Identifier> Error<ID> {
 }
 
 impl<ID: Identifier> Binding<ID> {
-    pub fn new(name: ID, args: Vec<ID>, process: Arc<Process<ID>>) -> Binding<ID> {
+    pub fn new(name: ID, args: Vec<ID>, process: Process<ID>) -> Binding<ID> {
         Binding { name, args, process }
     }
 
@@ -163,11 +163,11 @@ impl<ID: Identifier> Binding<ID> {
         &self.args
     }
 
-    pub fn process(&self) -> &Arc<Process<ID>> {
+    pub fn process(&self) -> &Process<ID> {
         &self.process
     }
 
-    pub fn instantiate(&self, args: &[Value]) -> Result<Arc<Process<ID>>, ID> {
+    pub fn instantiate(&self, args: &[Value]) -> Result<Process<ID>, ID> {
         if args.len() != self.args.len() {
             return Err(Error::ExpProcessArgs(self.name.clone(), self.args.clone(), args.to_vec()));
         }
@@ -176,7 +176,7 @@ impl<ID: Identifier> Binding<ID> {
         for (name, arg) in self.args.iter().zip(args.iter()) {
             subst.insert(name.clone(), arg);
         }
-        Ok(Process::subst_map(&self.process, &subst))
+        Ok(self.process.subst_map(&subst))
     }
 
     pub fn compress(&self, dict: &mut Dict<ID>) -> Binding<usize> {
@@ -214,11 +214,11 @@ impl<ID: Identifier> Program<ID> {
         &self.bindings
     }
 
-    pub fn set_process(&mut self, process: Arc<Process<ID>>) {
+    pub fn set_process(&mut self, process: Process<ID>) {
         self.process.replace(process);
     }
 
-    pub fn process(&self) -> Option<Arc<Process<ID>>> {
+    pub fn process(&self) -> Option<Process<ID>> {
         self.process.clone()
     }
 
@@ -253,14 +253,14 @@ impl<ID: Identifier> Transition<ID> {
     pub fn compress(&self, dict: &mut Dict<ID>) -> Transition<usize> {
         Transition {
             act: self.act.compress(dict),
-            to: self.to.compress(dict)
+            to: Arc::new(self.to.compress(dict))
         }
     }
 
     pub fn uncompress(other: &Transition<usize>, dict: &Dict<ID>) -> Transition<ID> {
         Transition {
             act: Action::uncompress(&other.act, dict),
-            to: Process::uncompress(&other.to, dict)
+            to: Arc::new(Process::uncompress(&other.to, dict))
         }
     }
 }
@@ -392,7 +392,7 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Binding<usize>>
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.0.args.is_empty() {
-            write!(f, "{} := {}", DisplayCompressed(&self.0.name, self.1), DisplayCompressed(self.0.process.as_ref(), self.1))
+            write!(f, "{} := {}", DisplayCompressed(&self.0.name, self.1), DisplayCompressed(&self.0.process, self.1))
         } else {
             write!(f, "{}[", DisplayCompressed(&self.0.name, self.1))?;
             for (i, next) in self.0.args.iter().enumerate() {
@@ -402,7 +402,7 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Binding<usize>>
                     write!(f, ", {}", DisplayCompressed(next, self.1))?;
                 }
             }
-            write!(f, "] := {}", DisplayCompressed(self.0.process.as_ref(), self.1))
+            write!(f, "] := {}", DisplayCompressed(&self.0.process, self.1))
         }
     }
 }
@@ -429,7 +429,7 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Program<usize>>
             writeln!(f, "{}", DisplayCompressed(next, self.1))?;
         }
         if let Some(process) = &self.0.process {
-            write!(f, "\n{}", DisplayCompressed(process.as_ref(), self.1))?;
+            write!(f, "\n{}", DisplayCompressed(process, self.1))?;
         }
         Ok(())
     }
@@ -447,6 +447,6 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Transition<usize>>
     where ID: Identifier + fmt::Display
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "--( {} )-> {}", DisplayCompressed(&self.0.act, self.1), DisplayCompressed(self.0.to.as_ref(), self.1))
+        write!(f, "--( {} )-> {}", DisplayCompressed(&self.0.act, self.1), DisplayCompressed(&self.0.to, self.1))
     }
 }

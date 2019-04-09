@@ -79,10 +79,10 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
             let next = self.parse_process(0)?;
             let t = self.lexer.peek(0)?;
             if let Token::COLONEQ = t.token {
-                if let Process::Name(name, args) = Arc::try_unwrap(next).unwrap() {
+                if let Process::Name(name, args) = next {
                     let mut params = Vec::new();
                     for next in args {
-                        if let Exp::IdExp(id) = next.as_ref() {
+                        if let Exp::IdExp(id) = next {
                             params.push(id.clone());
                         } else {
                             return Err(ParserError::from_token(&t,
@@ -109,7 +109,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
         }
     }
 
-    pub fn parse_process(&mut self, prec: i16) -> Result<Arc<Process<String>>> {
+    pub fn parse_process(&mut self, prec: i16) -> Result<Process<String>> {
         let mut acts = Vec::new();
         loop {
             match (self.lexer.peek(0)?.token, self.lexer.peek(1)?.token) {
@@ -254,7 +254,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
                     }
                 }
 
-                Arc::new(Process::Name(id, args))
+                Process::Name(id, args)
             },
             Token::LPAR => {
                 self.lexer.next();
@@ -343,7 +343,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
                         }
                     }
 
-                    res = Arc::new(Process::Restrict(res, comp, set));
+                    res = Process::Restrict(Arc::new(res), comp, set);
                 },
                 _ => break
             }
@@ -367,7 +367,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
         }
     }
 
-    pub fn parse_exp(&mut self, prec: i16) -> Result<Arc<Exp<String>>> {
+    pub fn parse_exp(&mut self, prec: i16) -> Result<Exp<String>> {
         let t = self.lexer.peek(0)?;
         let mut res = match t.token {
             Token::PLUS => {
@@ -400,7 +400,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
             },
             Token::ID(id) => {
                 self.lexer.next();
-                Arc::new(Exp::IdExp(id))
+                Exp::IdExp(id)
             },
             Token::COLON => {
                 self.lexer.next();
@@ -412,7 +412,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
                     },
                     Token::ID(id) => {
                         self.lexer.next();
-                        Arc::new(Exp::IdExp(id))
+                        Exp::IdExp(id)
                     },
                     _ =>
                         return Err(ParserError::from_token(&t,

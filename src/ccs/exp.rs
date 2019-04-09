@@ -43,159 +43,191 @@ impl<ID: Identifier> Exp<ID> {
                 Ok(Value::Str(s.clone())),
             Exp::IdExp(id) =>
                 Err(Error::ExpUnbound(id.clone())),
-            Exp::Unary(op, exp) => {
-                let val = exp.eval()?;
-                match (op, val) {
-                    (UnaryOp::Plus, Value::Int(n)) =>
-                        Ok(Value::Int(n)),
-                    (UnaryOp::Minus, Value::Int(n)) =>
-                        Ok(Value::Int(-n)),
-                    (UnaryOp::Not, Value::Bool(b)) =>
-                        Ok(Value::Bool(!b)),
-                    (op, val) =>
-                        Err(Error::ExpUnaryError(op.clone(), val))
-                }
-            }
-            Exp::Binary(op, l, r) => {
-                let lval = l.eval()?;
-                let rval = r.eval()?;
-                match (op, lval, rval) {
-                    (BinaryOp::Hat, Value::Str(l), Value::Str(r)) =>
-                        Ok(Value::Str(l.clone() + &r)),
-                    (BinaryOp::Hat, Value::Str(l), Value::Int(r)) =>
-                        Ok(Value::Str(format!("{}{}", l, r))),
-                    (BinaryOp::Hat, Value::Int(l), Value::Str(r)) =>
-                        Ok(Value::Str(format!("{}{}", l, r))),
-                    (BinaryOp::Plus, Value::Int(l), Value::Int(r)) =>
-                        Ok(Value::Int(l + r)),
-                    (BinaryOp::Minus, Value::Int(l), Value::Int(r)) =>
-                        Ok(Value::Int(l - r)),
-                    (BinaryOp::Star, Value::Int(l), Value::Int(r)) =>
-                        Ok(Value::Int(l * r)),
-                    (BinaryOp::Slash, Value::Int(l), Value::Int(r)) =>
-                        Ok(Value::Int(l / r)),
-                    (BinaryOp::Percent, Value::Int(l), Value::Int(r)) =>
-                        Ok(Value::Int(l % r)),
-                    (BinaryOp::AndAnd, Value::Bool(l), Value::Bool(r)) =>
-                        Ok(Value::Bool(l && r)),
-                    (BinaryOp::PipePipe, Value::Bool(l), Value::Bool(r)) =>
-                        Ok(Value::Bool(l || r)),
-                    (BinaryOp::EqEq, Value::Int(l), Value::Int(r)) =>
-                        Ok(Value::Bool(l == r)),
-                    (BinaryOp::EqEq, Value::Bool(l), Value::Bool(r)) =>
-                        Ok(Value::Bool(l == r)),
-                    (BinaryOp::NEq, Value::Int(l), Value::Int(r)) =>
-                        Ok(Value::Bool(l != r)),
-                    (BinaryOp::NEq, Value::Bool(l), Value::Bool(r)) =>
-                        Ok(Value::Bool(l != r)),
-                    (BinaryOp::LT, Value::Int(l), Value::Int(r)) =>
-                        Ok(Value::Bool(l < r)),
-                    (BinaryOp::LEq, Value::Int(l), Value::Int(r)) =>
-                        Ok(Value::Bool(l <= r)),
-                    (BinaryOp::GT, Value::Int(l), Value::Int(r)) =>
-                        Ok(Value::Bool(l > r)),
-                    (BinaryOp::GEq, Value::Int(l), Value::Int(r)) =>
-                        Ok(Value::Bool(l >= r)),
-                    (op, lval, rval) =>
-                        Err(Error::ExpBinaryError(op.clone(), lval, rval))
-                }
-            }
+            Exp::Unary(op, exp) =>
+                Exp::eval_unary(*op, exp.eval()?),
+            Exp::Binary(op, l, r) =>
+                Exp::eval_binary(*op, l.eval()?, r.eval()?)
         }
     }
 
-    pub fn eval_exp(&self) -> Result<Arc<Exp<ID>>, ID> {
-        Ok(match self.eval()? {
-            Value::Bool(b) =>
-                Arc::new(Exp::BoolConst(b)),
-            Value::Int(n) =>
-                Arc::new(Exp::IntConst(n)),
-            Value::Str(s) =>
-                Arc::new(Exp::StrConst(s.clone())),
-        })
+    pub fn eval_unary(op: UnaryOp, val: Value) -> Result<Value, ID> {
+        match (op, val) {
+            (UnaryOp::Plus, Value::Int(n)) =>
+                Ok(Value::Int(n)),
+            (UnaryOp::Minus, Value::Int(n)) =>
+                Ok(Value::Int(-n)),
+            (UnaryOp::Not, Value::Bool(b)) =>
+                Ok(Value::Bool(!b)),
+            (op, val) =>
+                Err(Error::ExpUnaryError(op.clone(), val))
+        }
     }
 
-    pub fn subst<S>(this: &Arc<Exp<ID>>, var: S, val: &Value) -> Arc<Exp<ID>>
+    pub fn eval_binary(op: BinaryOp, lval: Value, rval: Value) -> Result<Value, ID> {
+        match (op, lval, rval) {
+            (BinaryOp::Hat, Value::Str(l), Value::Str(r)) =>
+                Ok(Value::Str(l.clone() + &r)),
+            (BinaryOp::Hat, Value::Str(l), Value::Int(r)) =>
+                Ok(Value::Str(format!("{}{}", l, r))),
+            (BinaryOp::Hat, Value::Int(l), Value::Str(r)) =>
+                Ok(Value::Str(format!("{}{}", l, r))),
+            (BinaryOp::Plus, Value::Int(l), Value::Int(r)) =>
+                Ok(Value::Int(l + r)),
+            (BinaryOp::Minus, Value::Int(l), Value::Int(r)) =>
+                Ok(Value::Int(l - r)),
+            (BinaryOp::Star, Value::Int(l), Value::Int(r)) =>
+                Ok(Value::Int(l * r)),
+            (BinaryOp::Slash, Value::Int(l), Value::Int(r)) =>
+                Ok(Value::Int(l / r)),
+            (BinaryOp::Percent, Value::Int(l), Value::Int(r)) =>
+                Ok(Value::Int(l % r)),
+            (BinaryOp::AndAnd, Value::Bool(l), Value::Bool(r)) =>
+                Ok(Value::Bool(l && r)),
+            (BinaryOp::PipePipe, Value::Bool(l), Value::Bool(r)) =>
+                Ok(Value::Bool(l || r)),
+            (BinaryOp::EqEq, Value::Int(l), Value::Int(r)) =>
+                Ok(Value::Bool(l == r)),
+            (BinaryOp::EqEq, Value::Bool(l), Value::Bool(r)) =>
+                Ok(Value::Bool(l == r)),
+            (BinaryOp::NEq, Value::Int(l), Value::Int(r)) =>
+                Ok(Value::Bool(l != r)),
+            (BinaryOp::NEq, Value::Bool(l), Value::Bool(r)) =>
+                Ok(Value::Bool(l != r)),
+            (BinaryOp::LT, Value::Int(l), Value::Int(r)) =>
+                Ok(Value::Bool(l < r)),
+            (BinaryOp::LEq, Value::Int(l), Value::Int(r)) =>
+                Ok(Value::Bool(l <= r)),
+            (BinaryOp::GT, Value::Int(l), Value::Int(r)) =>
+                Ok(Value::Bool(l > r)),
+            (BinaryOp::GEq, Value::Int(l), Value::Int(r)) =>
+                Ok(Value::Bool(l >= r)),
+            (op, lval, rval) =>
+                Err(Error::ExpBinaryError(op.clone(), lval, rval))
+        }
+    }
+
+    pub fn subst<S>(&self, var: S, val: &Value) -> Exp<ID>
         where S: Into<ID>
     {
         let mut subst = HashMap::new();
         subst.insert(var.into(), val);
-        Exp::subst_map(this, &subst)
+        self.subst_map_opt(&subst).unwrap_or_else(|| self.clone())
     }
 
-    pub fn subst_map(this: &Arc<Exp<ID>>, subst: &HashMap<ID, &Value>) -> Arc<Exp<ID>> {
+    pub fn subst_map(&self, subst: &HashMap<ID, &Value>) -> Exp<ID> {
+        self.subst_map_opt(subst).unwrap_or_else(|| self.clone())
+    }
+
+    pub fn subst_opt<S>(&self, var: S, val: &Value) -> Option<Exp<ID>>
+        where S: Into<ID>
+    {
+        let mut subst = HashMap::new();
+        subst.insert(var.into(), val);
+        self.subst_map_opt(&subst)
+    }
+
+    pub fn subst_map_opt(&self, subst: &HashMap<ID, &Value>) -> Option<Exp<ID>> {
         if subst.is_empty() {
-            return Arc::clone(this);
+            return None;
         }
 
-        match this.as_ref() {
+        match self {
             Exp::BoolConst(_)
           | Exp::IntConst(_)
           | Exp::StrConst(_) =>
-                Arc::clone(this),
+                None,
             Exp::IdExp(id) =>
                 if let Some(val) = subst.get(id) {
                     match val {
                         Value::Bool(b) =>
-                            Arc::new(Exp::BoolConst(*b)),
+                            Some(Exp::BoolConst(*b)),
                         Value::Int(n) =>
-                            Arc::new(Exp::IntConst(*n)),
+                            Some(Exp::IntConst(*n)),
                         Value::Str(s) =>
-                            Arc::new(Exp::StrConst(s.clone()))
+                            Some(Exp::StrConst(s.clone()))
                     }
                 } else {
-                    Arc::clone(this)
+                    None
                 },
             Exp::Unary(op, exp) => {
-                let exp2 = Exp::subst_map(exp, subst);
-                if Arc::ptr_eq(&exp2, &exp) {
-                    Arc::clone(this)
-                } else {
-                    Arc::new(Exp::Unary(op.clone(), exp2))
+                match exp.subst_map_opt(subst) {
+                    None =>
+                        None,
+                    Some(exp2) =>
+                        Some(Exp::Unary(op.clone(), Arc::new(exp2)))
                 }
             },
             Exp::Binary(op, l, r) => {
-                let l2 = Exp::subst_map(l, subst);
-                let r2 = Exp::subst_map(r, subst);
-                if Arc::ptr_eq(&l2, &l) && Arc::ptr_eq(&r2, &r) {
-                    Arc::clone(this)
-                } else {
-                    Arc::new(Exp::Binary(op.clone(), l2, r2))
+                match (l.subst_map_opt(subst), r.subst_map_opt(subst)) {
+                    (None, None) =>
+                        None,
+                    (l2, r2) => {
+                        let l2 = l2.map_or_else(|| Arc::clone(l), |l2| Arc::new(l2));
+                        let r2 = r2.map_or_else(|| Arc::clone(r), |r2| Arc::new(r2));
+                        Some(Exp::Binary(op.clone(), l2, r2))
+                    }
                 }
             }
         }
     }
 
-    pub fn compress(&self, dict: &mut Dict<ID>) -> Arc<Exp<usize>> {
+    pub fn compress(&self, dict: &mut Dict<ID>) -> Exp<usize> {
         match self {
             Exp::BoolConst(b) =>
-                Arc::new(Exp::BoolConst(*b)),
+                Exp::BoolConst(*b),
             Exp::IntConst(n) =>
-                Arc::new(Exp::IntConst(*n)),
+                Exp::IntConst(*n),
             Exp::StrConst(s) =>
-                Arc::new(Exp::StrConst(s.clone())),
+                Exp::StrConst(s.clone()),
             Exp::IdExp(id) =>
-                Arc::new(Exp::IdExp(dict.lookup_insert(id))),
+                Exp::IdExp(dict.lookup_insert(id)),
             Exp::Unary(op, exp) =>
-                Arc::new(Exp::Unary(*op, exp.compress(dict))),
+                Exp::Unary(*op, Arc::new(exp.compress(dict))),
             Exp::Binary(op, lhs, rhs) =>
-                Arc::new(Exp::Binary(*op, lhs.compress(dict), rhs.compress(dict)))
+                Exp::Binary(*op, Arc::new(lhs.compress(dict)), Arc::new(rhs.compress(dict)))
         }
     }
 
-    pub fn uncompress(other: &Exp<usize>, dict: &Dict<ID>) -> Arc<Exp<ID>> {
+    pub fn uncompress(other: &Exp<usize>, dict: &Dict<ID>) -> Exp<ID> {
         match other {
             Exp::BoolConst(b) =>
-                Arc::new(Exp::BoolConst(*b)),
+                Exp::BoolConst(*b),
             Exp::IntConst(n) =>
-                Arc::new(Exp::IntConst(*n)),
+                Exp::IntConst(*n),
             Exp::StrConst(s) =>
-                Arc::new(Exp::StrConst(s.clone())),
+                Exp::StrConst(s.clone()),
             Exp::IdExp(id) =>
-                Arc::new(Exp::IdExp(dict.index_to_id(*id).clone())),
+                Exp::IdExp(dict.index_to_id(*id).clone()),
             Exp::Unary(op, exp) =>
-                Arc::new(Exp::Unary(*op, Exp::uncompress(exp, dict))),
+                Exp::Unary(*op, Arc::new(Exp::uncompress(exp, dict))),
             Exp::Binary(op, lhs, rhs) =>
-                Arc::new(Exp::Binary(*op, Exp::uncompress(lhs, dict), Exp::uncompress(rhs, dict)))
+                Exp::Binary(*op, Arc::new(Exp::uncompress(lhs, dict)), Arc::new(Exp::uncompress(rhs, dict)))
+        }
+    }
+}
+
+impl<ID: Identifier> From<Value> for Exp<ID> {
+    fn from(val: Value) -> Exp<ID> {
+        match val {
+            Value::Bool(b) =>
+                Exp::BoolConst(b),
+            Value::Int(n) =>
+                Exp::IntConst(n),
+            Value::Str(s) =>
+                Exp::StrConst(s)
+        }
+    }
+}
+
+impl<ID: Identifier> From<&Value> for Exp<ID> {
+    fn from(val: &Value) -> Exp<ID> {
+        match val {
+            Value::Bool(b) =>
+                Exp::BoolConst(*b),
+            Value::Int(n) =>
+                Exp::IntConst(*n),
+            Value::Str(s) =>
+                Exp::StrConst(s.clone()),
         }
     }
 }
