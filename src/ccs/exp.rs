@@ -50,6 +50,46 @@ impl<ID: Identifier> Exp<ID> {
         }
     }
 
+    pub fn _fold_min(&self) -> Option<Value> {
+        match self {
+            Exp::BoolConst(b) =>
+                Some(Value::Bool(*b)),
+            Exp::IntConst(n) =>
+                Some(Value::Int(*n)),
+            Exp::StrConst(s) =>
+                Some(Value::Str(s.clone())),
+            Exp::IdExp(_) =>
+                None,
+            Exp::Unary(op, exp) =>
+                match exp._fold_min_inner() {
+                    Some(val) =>
+                        Exp::<ID>::eval_unary(*op, val).ok(),
+                    None =>
+                        None
+                },
+            Exp::Binary(op, l, r) =>
+                match (l._fold_min_inner(), r._fold_min_inner()) {
+                    (Some(lval), Some(rval)) =>
+                        Exp::<ID>::eval_binary(*op, lval, rval).ok(),
+                    _ =>
+                        None
+                }
+        }
+    }
+
+    pub fn _fold_min_inner(&self) -> Option<Value> {
+        match self {
+            Exp::BoolConst(b) =>
+                Some(Value::Bool(*b)),
+            Exp::IntConst(n) =>
+                Some(Value::Int(*n)),
+            Exp::StrConst(s) =>
+                Some(Value::Str(s.clone())),
+            _ =>
+                None
+        }
+    }
+
     pub fn eval_unary(op: UnaryOp, val: Value) -> Result<Value, ID> {
         match (op, val) {
             (UnaryOp::Plus, Value::Int(n)) =>
@@ -106,27 +146,27 @@ impl<ID: Identifier> Exp<ID> {
         }
     }
 
-    pub fn subst<S>(&self, var: S, val: &Value) -> Exp<ID>
+    pub fn subst<S>(&self, var: S, val: &Value, fold: &FoldOptions) -> Exp<ID>
         where S: Into<ID>
     {
         let mut subst = HashMap::new();
         subst.insert(var.into(), val);
-        self.subst_map_opt(&subst).unwrap_or_else(|| self.clone())
+        self.subst_map_opt(&subst, fold).unwrap_or_else(|| self.clone())
     }
 
-    pub fn subst_map(&self, subst: &HashMap<ID, &Value>) -> Exp<ID> {
-        self.subst_map_opt(subst).unwrap_or_else(|| self.clone())
+    pub fn subst_map(&self, subst: &HashMap<ID, &Value>, fold: &FoldOptions) -> Exp<ID> {
+        self.subst_map_opt(subst, fold).unwrap_or_else(|| self.clone())
     }
 
-    pub fn subst_opt<S>(&self, var: S, val: &Value) -> Option<Exp<ID>>
+    pub fn subst_opt<S>(&self, var: S, val: &Value, fold: &FoldOptions) -> Option<Exp<ID>>
         where S: Into<ID>
     {
         let mut subst = HashMap::new();
         subst.insert(var.into(), val);
-        self.subst_map_opt(&subst)
+        self.subst_map_opt(&subst, fold)
     }
 
-    pub fn subst_map_opt(&self, subst: &HashMap<ID, &Value>) -> Option<Exp<ID>> {
+    pub fn subst_map_opt(&self, subst: &HashMap<ID, &Value>, fold: &FoldOptions) -> Option<Exp<ID>> {
         if subst.is_empty() {
             return None;
         }
@@ -150,21 +190,34 @@ impl<ID: Identifier> Exp<ID> {
                     None
                 },
             Exp::Unary(op, exp) => {
-                match exp.subst_map_opt(subst) {
+                match exp.subst_map_opt(subst, fold) {
                     None =>
                         None,
-                    Some(exp2) =>
-                        Some(Exp::Unary(op.clone(), Arc::new(exp2)))
+                    Some(exp2) => {
+                        let res = Exp::Unary(op.clone(), Arc::new(exp2));
+                        if fold.fold_exp {
+                            if let Some(val) = res._fold_min() {
+                                return Some(val.into());
+                            }
+                        }
+                        Some(res)
+                    }
                 }
             },
             Exp::Binary(op, l, r) => {
-                match (l.subst_map_opt(subst), r.subst_map_opt(subst)) {
+                match (l.subst_map_opt(subst, fold), r.subst_map_opt(subst, fold)) {
                     (None, None) =>
                         None,
                     (l2, r2) => {
                         let l2 = l2.map_or_else(|| Arc::clone(l), |l2| Arc::new(l2));
                         let r2 = r2.map_or_else(|| Arc::clone(r), |r2| Arc::new(r2));
-                        Some(Exp::Binary(op.clone(), l2, r2))
+                        let res = Exp::Binary(op.clone(), l2, r2);
+                        if fold.fold_exp {
+                            if let Some(val) = res._fold_min() {
+                                return Some(val.into());
+                            }
+                        }
+                        Some(res)
                     }
                 }
             }

@@ -96,15 +96,15 @@ impl<ID: Identifier> Action<ID> {
         }
     }
 
-    pub fn subst<S>(&self, var: S, val: &Value) -> Action<ID>
+    pub fn subst<S>(&self, var: S, val: &Value, fold: &FoldOptions) -> Action<ID>
         where S: Into<ID>
     {
         let mut subst = HashMap::new();
         subst.insert(var.into(), val);
-        self.subst_map(&subst)
+        self.subst_map(&subst, fold)
     }
 
-    pub fn subst_map(&self, subst: &HashMap<ID, &Value>) -> Action<ID> {
+    pub fn subst_map(&self, subst: &HashMap<ID, &Value>, fold: &FoldOptions) -> Action<ID> {
         match self {
             Action::Tau
           | Action::Delta
@@ -115,21 +115,21 @@ impl<ID: Identifier> Action<ID> {
                 self.clone(),
 
             Action::Snd(name, None, Some(exp)) =>
-                Action::Snd(name.clone(), None, Some(Exp::subst_map(exp, subst))),
+                Action::Snd(name.clone(), None, Some(Exp::subst_map(exp, subst, fold))),
             Action::Snd(name, Some(param), None) =>
-                Action::Snd(name.clone(), Some(Exp::subst_map(param, subst)), None),
+                Action::Snd(name.clone(), Some(Exp::subst_map(param, subst, fold)), None),
             Action::Snd(name, Some(param), Some(exp)) =>
-                Action::Snd(name.clone(), Some(Exp::subst_map(param, subst)), Some(Exp::subst_map(exp, subst))),
+                Action::Snd(name.clone(), Some(Exp::subst_map(param, subst, fold)), Some(Exp::subst_map(exp, subst, fold))),
 
             Action::Recv(name, None, Some(exp)) =>
-                Action::Recv(name.clone(), None, Some(Exp::subst_map(exp, subst))),
+                Action::Recv(name.clone(), None, Some(Exp::subst_map(exp, subst, fold))),
             Action::Recv(name, Some(param), None) =>
-                Action::Recv(name.clone(), Some(Exp::subst_map(param, subst)), None),
+                Action::Recv(name.clone(), Some(Exp::subst_map(param, subst, fold)), None),
             Action::Recv(name, Some(param), Some(exp)) =>
-                Action::Recv(name.clone(), Some(Exp::subst_map(param, subst)), Some(Exp::subst_map(exp, subst))),
+                Action::Recv(name.clone(), Some(Exp::subst_map(param, subst, fold)), Some(Exp::subst_map(exp, subst, fold))),
 
             Action::RecvInto(name, Some(param), var2) =>
-                Action::RecvInto(name.clone(), Some(Exp::subst_map(param, subst)), var2.clone()),
+                Action::RecvInto(name.clone(), Some(Exp::subst_map(param, subst, fold)), var2.clone()),
         }
     }
 
@@ -216,8 +216,8 @@ impl<ID: Identifier> Action<ID> {
 }
 
 impl<ID: Identifier> Process<ID> {
-    pub fn get_transitions(&self, program: &Program<ID>) -> Result<HashSet<Transition<ID>>, ID> {
-        let trans = self._get_transitions(program, &mut HashSet::new())?;
+    pub fn get_transitions(&self, program: &Program<ID>, fold: &FoldOptions) -> Result<HashSet<Transition<ID>>, ID> {
+        let trans = self._get_transitions(program, &mut HashSet::new(), fold)?;
         let mut res = HashSet::new();
         for next in trans.into_iter() {
             if let Action::RecvInto(name, _, _) = &next.act {
@@ -228,7 +228,7 @@ impl<ID: Identifier> Process<ID> {
         Ok(res)
     }
 
-    fn _get_transitions(&self, program: &Program<ID>, seen: &mut HashSet<ID>) -> Result<Vec<Transition<ID>>, ID> {
+    fn _get_transitions(&self, program: &Program<ID>, seen: &mut HashSet<ID>, fold: &FoldOptions) -> Result<Vec<Transition<ID>>, ID> {
         match self {
             Process::Null => {
                 Ok(Vec::new())
@@ -251,7 +251,7 @@ impl<ID: Identifier> Process<ID> {
                         for next in args {
                             values.push(next.eval()?);
                         }
-                        let res = bind.instantiate(&values)?._get_transitions(program, seen)?;
+                        let res = bind.instantiate(&values, fold)?._get_transitions(program, seen, fold)?;
                         seen.remove(name);
                         Ok(res)
                     },
@@ -268,12 +268,12 @@ impl<ID: Identifier> Process<ID> {
             },
             Process::Choice(l, r) => {
                 let mut set = Vec::new();
-                for next in l._get_transitions(program, seen)? {
+                for next in l._get_transitions(program, seen, fold)? {
                     set.push(Transition::new(
                         next.act, next.to
                     ));
                 }
-                for next in r._get_transitions(program, seen)? {
+                for next in r._get_transitions(program, seen, fold)? {
                     set.push(Transition::new(
                         next.act, next.to
                     ));
@@ -282,8 +282,8 @@ impl<ID: Identifier> Process<ID> {
             },
             Process::Parallel(l, r) => {
                 let mut set = Vec::new();
-                let trans_l = l._get_transitions(program, seen)?;
-                let trans_r = r._get_transitions(program, seen)?;
+                let trans_l = l._get_transitions(program, seen, fold)?;
+                let trans_r = r._get_transitions(program, seen, fold)?;
                 for l in trans_l.iter() {
                     for r in trans_r.iter() {
                         match l.act.sync(&r.act)? {
@@ -301,7 +301,7 @@ impl<ID: Identifier> Process<ID> {
                                 //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
                                     ccs_act!{ i }, Arc::new(Process::Parallel(
-                                        Arc::new(l.to.subst(var.clone(), &val)),
+                                        Arc::new(l.to.subst(var.clone(), &val, fold)),
                                         Arc::clone(&r.to)
                                     ))
                                 ));
@@ -311,7 +311,7 @@ impl<ID: Identifier> Process<ID> {
                                 set.push(Transition::new(
                                     ccs_act!{ i }, Arc::new(Process::Parallel(
                                         Arc::clone(&l.to),
-                                        Arc::new(r.to.subst(var.clone(), &val))
+                                        Arc::new(r.to.subst(var.clone(), &val, fold))
                                     ))
                                 ));
                             }
@@ -351,7 +351,7 @@ impl<ID: Identifier> Process<ID> {
             },
             Process::Sequential(l, r) => {
                 let mut set = Vec::new();
-                for next in l._get_transitions(program, seen)? {
+                for next in l._get_transitions(program, seen, fold)? {
                     if let Action::Delta = next.act {
                         set.push(Transition::new(
                             ccs_act!{ i }, Arc::clone(r)
@@ -366,7 +366,7 @@ impl<ID: Identifier> Process<ID> {
             },
             Process::Restrict(p, comp, set) => {
                 let mut res = Vec::new();
-                for next in p._get_transitions(program, seen)? {
+                for next in p._get_transitions(program, seen, fold)? {
                     if let Some(name) = next.act.observe() {
                         //if comp == false and set contains name, restrict.
                         //if comp == true and set does not contain name, restrict.
@@ -384,7 +384,7 @@ impl<ID: Identifier> Process<ID> {
                 let val = cond.eval()?;
                 if let Value::Bool(b) = &val {
                     if *b {
-                        p._get_transitions(program, seen)
+                        p._get_transitions(program, seen, fold)
                     } else {
                         Ok(Vec::new())
                     }
@@ -395,27 +395,27 @@ impl<ID: Identifier> Process<ID> {
         }
     }
 
-    pub fn subst<S>(&self, var: S, val: &Value) -> Process<ID>
+    pub fn subst<S>(&self, var: S, val: &Value, fold: &FoldOptions) -> Process<ID>
         where S: Into<ID>
     {
         let mut subst = HashMap::new();
         subst.insert(var.into(), val);
-        self.subst_map_opt(&subst).unwrap_or_else(|| self.clone())
+        self.subst_map_opt(&subst, fold).unwrap_or_else(|| self.clone())
     }
 
-    pub fn subst_map(&self, subst: &HashMap<ID, &Value>) -> Process<ID> {
-        self.subst_map_opt(subst).unwrap_or_else(|| self.clone())
+    pub fn subst_map(&self, subst: &HashMap<ID, &Value>, fold: &FoldOptions) -> Process<ID> {
+        self.subst_map_opt(subst, fold).unwrap_or_else(|| self.clone())
     }
 
-    pub fn subst_opt<S>(&self, var: S, val: &Value) -> Option<Process<ID>>
+    pub fn subst_opt<S>(&self, var: S, val: &Value, fold: &FoldOptions) -> Option<Process<ID>>
         where S: Into<ID>
     {
         let mut subst = HashMap::new();
         subst.insert(var.into(), val);
-        self.subst_map_opt(&subst)
+        self.subst_map_opt(&subst, fold)
     }
 
-    pub fn subst_map_opt(&self, subst: &HashMap<ID, &Value>) -> Option<Process<ID>> {
+    pub fn subst_map_opt(&self, subst: &HashMap<ID, &Value>, fold: &FoldOptions) -> Option<Process<ID>> {
         if subst.is_empty() {
             return None;
         }
@@ -429,7 +429,7 @@ impl<ID: Identifier> Process<ID> {
                 let mut args2 = Vec::new();
                 let mut new = false;
                 for next in args {
-                    match next.subst_map_opt(subst) {
+                    match next.subst_map_opt(subst, fold) {
                         None =>
                             args2.push(next.clone()),
                         Some(next2) => {
@@ -448,7 +448,7 @@ impl<ID: Identifier> Process<ID> {
                 let mut subst2 = subst.clone();
                 subst2.remove(var);
 
-                match p.subst_map_opt(&subst2) {
+                match p.subst_map_opt(&subst2, fold) {
                     None =>
                         None,
                     Some(p2) =>
@@ -462,7 +462,7 @@ impl<ID: Identifier> Process<ID> {
                 let mut subst2 = subst.clone();
                 subst2.remove(var);
 
-                match (param.subst_map_opt(subst), p.subst_map_opt(&subst2)) {
+                match (param.subst_map_opt(subst, fold), p.subst_map_opt(&subst2, fold)) {
                     (None, None) =>
                         None,
                     (param2, p2) => {
@@ -476,8 +476,8 @@ impl<ID: Identifier> Process<ID> {
                 }
             },
             Process::Prefix(act, p) => {
-                let act2 = act.subst_map(subst);
-                match p.subst_map_opt(subst) {
+                let act2 = act.subst_map(subst, fold);
+                match p.subst_map_opt(subst, fold) {
                     None =>
                         if act2 == *act {
                             None
@@ -489,7 +489,7 @@ impl<ID: Identifier> Process<ID> {
                 }
             }
             Process::Choice(l, r) => {
-                match (l.subst_map_opt(subst), r.subst_map_opt(subst)) {
+                match (l.subst_map_opt(subst, fold), r.subst_map_opt(subst, fold)) {
                     (None, None) =>
                         None,
                     (l2, r2) => {
@@ -500,7 +500,7 @@ impl<ID: Identifier> Process<ID> {
                 }
             },
             Process::Parallel(l, r) => {
-                match (l.subst_map_opt(subst), r.subst_map_opt(subst)) {
+                match (l.subst_map_opt(subst, fold), r.subst_map_opt(subst, fold)) {
                     (None, None) =>
                         None,
                     (l2, r2) => {
@@ -511,7 +511,7 @@ impl<ID: Identifier> Process<ID> {
                 }
             },
             Process::Sequential(l, r) => {
-                match (l.subst_map_opt(subst), r.subst_map_opt(subst)) {
+                match (l.subst_map_opt(subst, fold), r.subst_map_opt(subst, fold)) {
                     (None, None) =>
                         None,
                     (l2, r2) => {
@@ -522,7 +522,7 @@ impl<ID: Identifier> Process<ID> {
                 }
             },
             Process::Restrict(p, comp, set) => {
-                match p.subst_map_opt(subst) {
+                match p.subst_map_opt(subst, fold) {
                     None =>
                         None,
                     Some(p2) =>
@@ -530,7 +530,7 @@ impl<ID: Identifier> Process<ID> {
                 }
             }
             Process::When(cond, p) => {
-                match (cond.subst_map_opt(subst), p.subst_map_opt(subst)) {
+                match (cond.subst_map_opt(subst, fold), p.subst_map_opt(subst, fold)) {
                     (None, None) =>
                         None,
                     (cond2, p2) => {

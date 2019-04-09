@@ -100,6 +100,10 @@ pub struct Transition<ID: Identifier = String> {
     pub to: Arc<Process<ID>>
 }
 
+pub struct FoldOptions {
+    pub fold_exp: bool
+}
+
 
 
 impl<ID: Identifier> Error<ID> {
@@ -167,7 +171,7 @@ impl<ID: Identifier> Binding<ID> {
         &self.process
     }
 
-    pub fn instantiate(&self, args: &[Value]) -> Result<Process<ID>, ID> {
+    pub fn instantiate(&self, args: &[Value], fold: &FoldOptions) -> Result<Process<ID>, ID> {
         if args.len() != self.args.len() {
             return Err(Error::ExpProcessArgs(self.name.clone(), self.args.clone(), args.to_vec()));
         }
@@ -176,7 +180,7 @@ impl<ID: Identifier> Binding<ID> {
         for (name, arg) in self.args.iter().zip(args.iter()) {
             subst.insert(name.clone(), arg);
         }
-        Ok(self.process.subst_map(&subst))
+        Ok(self.process.subst_map(&subst, fold))
     }
 
     pub fn compress(&self, dict: &mut Dict<ID>) -> Binding<usize> {
@@ -261,6 +265,14 @@ impl<ID: Identifier> Transition<ID> {
         Transition {
             act: Action::uncompress(&other.act, dict),
             to: Arc::new(Process::uncompress(&other.to, dict))
+        }
+    }
+}
+
+impl Default for FoldOptions {
+    fn default() -> FoldOptions {
+        FoldOptions {
+            fold_exp: false
         }
     }
 }
