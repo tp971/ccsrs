@@ -216,8 +216,10 @@ impl<ID: Identifier> Action<ID> {
 }
 
 impl<ID: Identifier> Process<ID> {
-    pub fn get_transitions(&self, program: &Program<ID>, fold: &FoldOptions) -> Result<HashSet<Transition<ID>>, ID> {
-        let trans = self._get_transitions(program, &mut HashSet::new(), fold)?;
+    pub fn get_transitions(
+        &self, program: &Program<ID>, fold: &FoldOptions
+    ) -> Result<HashSet<Transition<ID>>, ID> {
+        let trans = self._get_transitions(program, fold, &mut HashSet::new())?;
         let mut res = HashSet::new();
         for next in trans.into_iter() {
             if let Action::RecvInto(name, _, _) = &next.act {
@@ -228,16 +230,18 @@ impl<ID: Identifier> Process<ID> {
         Ok(res)
     }
 
-    fn _get_transitions(&self, program: &Program<ID>, seen: &mut HashSet<ID>, fold: &FoldOptions) -> Result<Vec<Transition<ID>>, ID> {
+    fn _get_transitions(
+        &self, program: &Program<ID>, fold: &FoldOptions,
+        seen: &mut HashSet<ID>
+    ) -> Result<Vec<Transition<ID>>, ID> {
         match self {
             Process::Null => {
                 Ok(Vec::new())
             },
             Process::Term => {
-                let mut set = Vec::new();
-                set.push(Transition::new(
-                    ccs_act!{ e }, Arc::new(ccs!{ 0 })));
-                Ok(set)
+                Ok(vec![Transition::new(
+                    Action::Delta, Arc::new(Process::Null)
+                )])
             },
             Process::Name(name, args) => {
                 if seen.contains(name) {
@@ -251,7 +255,9 @@ impl<ID: Identifier> Process<ID> {
                         for next in args {
                             values.push(next.eval()?);
                         }
-                        let res = bind.instantiate(&values, fold)?._get_transitions(program, seen, fold)?;
+                        let res = bind
+                            .instantiate(&values, fold)?
+                            ._get_transitions(program, fold, seen)?;
                         seen.remove(name);
                         Ok(res)
                     },
@@ -260,20 +266,18 @@ impl<ID: Identifier> Process<ID> {
                 }
             },
             Process::Prefix(act, p) => {
-                let mut set = Vec::new();
-                set.push(Transition::new(
+                Ok(vec![Transition::new(
                     act.eval()?, Arc::clone(p)
-                ));
-                Ok(set)
+                )])
             },
             Process::Choice(l, r) => {
                 let mut set = Vec::new();
-                for next in l._get_transitions(program, seen, fold)? {
+                for next in l._get_transitions(program, fold, seen)? {
                     set.push(Transition::new(
                         next.act, next.to
                     ));
                 }
-                for next in r._get_transitions(program, seen, fold)? {
+                for next in r._get_transitions(program, fold, seen)? {
                     set.push(Transition::new(
                         next.act, next.to
                     ));
@@ -282,8 +286,8 @@ impl<ID: Identifier> Process<ID> {
             },
             Process::Parallel(l, r) => {
                 let mut set = Vec::new();
-                let trans_l = l._get_transitions(program, seen, fold)?;
-                let trans_r = r._get_transitions(program, seen, fold)?;
+                let trans_l = l._get_transitions(program, fold, seen)?;
+                let trans_r = r._get_transitions(program, fold, seen)?;
                 for l in trans_l.iter() {
                     for r in trans_r.iter() {
                         match l.act.sync(&r.act)? {
@@ -291,7 +295,7 @@ impl<ID: Identifier> Process<ID> {
                             Some(None) => {
                                 //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
-                                    ccs_act!{ i }, Arc::new(Process::Parallel(
+                                    Action::Tau, Arc::new(Process::Parallel(
                                         Arc::clone(&l.to),
                                         Arc::clone(&r.to)
                                     ))
@@ -300,7 +304,7 @@ impl<ID: Identifier> Process<ID> {
                             Some(Some((Side::Left, var, val))) => {
                                 //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
-                                    ccs_act!{ i }, Arc::new(Process::Parallel(
+                                    Action::Tau, Arc::new(Process::Parallel(
                                         Arc::new(l.to.subst(var.clone(), &val, fold)),
                                         Arc::clone(&r.to)
                                     ))
@@ -309,7 +313,7 @@ impl<ID: Identifier> Process<ID> {
                             Some(Some((Side::Right, var, val))) => {
                                 //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
-                                    ccs_act!{ i }, Arc::new(Process::Parallel(
+                                    Action::Tau, Arc::new(Process::Parallel(
                                         Arc::clone(&l.to),
                                         Arc::new(r.to.subst(var.clone(), &val, fold))
                                     ))
@@ -319,7 +323,7 @@ impl<ID: Identifier> Process<ID> {
 
                         if let (Action::Delta, Action::Delta) = (&l.act, &r.act) {
                             set.push(Transition::new(
-                                ccs_act!{ e }, Arc::new(Process::Parallel(
+                                Action::Delta, Arc::new(Process::Parallel(
                                     Arc::clone(&l.to),
                                     Arc::clone(&r.to)
                                 ))
@@ -351,14 +355,15 @@ impl<ID: Identifier> Process<ID> {
             },
             Process::Sequential(l, r) => {
                 let mut set = Vec::new();
-                for next in l._get_transitions(program, seen, fold)? {
+                for next in l._get_transitions(program, fold, seen)? {
                     if let Action::Delta = next.act {
                         set.push(Transition::new(
-                            ccs_act!{ i }, Arc::clone(r)
+                            Action::Tau, Arc::clone(r)
                         ));
                     } else {
                         set.push(Transition::new(
-                            next.act, Arc::new(Process::Sequential(next.to, Arc::clone(r)))
+                            next.act,
+                            Arc::new(Process::Sequential(next.to, Arc::clone(r)))
                         ));
                     }
                 }
@@ -366,7 +371,7 @@ impl<ID: Identifier> Process<ID> {
             },
             Process::Restrict(p, comp, set) => {
                 let mut res = Vec::new();
-                for next in p._get_transitions(program, seen, fold)? {
+                for next in p._get_transitions(program, fold, seen)? {
                     if let Some(name) = next.act.observe() {
                         //if comp == false and set contains name, restrict.
                         //if comp == true and set does not contain name, restrict.
@@ -375,7 +380,8 @@ impl<ID: Identifier> Process<ID> {
                         }
                     }
                     res.push(Transition::new(
-                        next.act, Arc::new(Process::Restrict(next.to, *comp, set.clone()))
+                        next.act,
+                        Arc::new(Process::Restrict(next.to, *comp, set.clone()))
                     ));
                 }
                 Ok(res)
@@ -384,7 +390,7 @@ impl<ID: Identifier> Process<ID> {
                 let val = cond.eval()?;
                 if let Value::Bool(b) = &val {
                     if *b {
-                        p._get_transitions(program, seen, fold)
+                        p._get_transitions(program, fold, seen)
                     } else {
                         Ok(Vec::new())
                     }

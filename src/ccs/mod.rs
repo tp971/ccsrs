@@ -4,8 +4,6 @@ pub use exp::*;
 mod process;
 pub use process::*;
 
-use crate::{ccs, ccs_act};
-
 use std::collections::{HashMap, hash_map::Entry};
 use std::fmt;
 use std::hash::Hash;
@@ -100,6 +98,7 @@ pub struct Transition<ID: Identifier = String> {
     pub to: Arc<Process<ID>>
 }
 
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FoldOptions {
     pub fold_exp: bool
 }
