@@ -24,7 +24,8 @@ pub enum Process<ID: Identifier = String> {
     Parallel(Arc<Process<ID>>, Arc<Process<ID>>),
     Sequential(Arc<Process<ID>>, Arc<Process<ID>>),
     Restrict(Arc<Process<ID>>, bool, BTreeSet<ID>), //process, complement, restriction set
-    When(Exp<ID>, Arc<Process<ID>>)
+    When(Exp<ID>, Arc<Process<ID>>),
+    InputPoint(Arc<Process<ID>>),
 }
 
 pub enum Side {
@@ -249,12 +250,12 @@ impl<ID: Identifier> Process<ID> {
                 }
                 match program.binding(name) {
                     Some(bind) => {
-                        //let mut seen = seen.clone();
-                        seen.insert(name.clone());
                         let mut values = Vec::new();
                         for next in args {
                             values.push(next.eval()?);
                         }
+
+                        seen.insert(name.clone());
                         let res = bind
                             .instantiate(&values, fold)?
                             ._get_transitions(program, fold, seen)?;
@@ -265,22 +266,20 @@ impl<ID: Identifier> Process<ID> {
                         Err(Error::Unbound(name.clone()))
                 }
             },
+            Process::Prefix(act @ Action::RecvInto(_, _, _), p) => {
+                Ok(vec![Transition::new(
+                    act.eval()?, Arc::new(Process::InputPoint(Arc::clone(p)))
+                )])
+            },
             Process::Prefix(act, p) => {
                 Ok(vec![Transition::new(
                     act.eval()?, Arc::clone(p)
                 )])
             },
             Process::Choice(l, r) => {
-                let mut set = Vec::new();
-                for next in l._get_transitions(program, fold, seen)? {
-                    set.push(Transition::new(
-                        next.act, next.to
-                    ));
-                }
+                let mut set = l._get_transitions(program, fold, seen)?;
                 for next in r._get_transitions(program, fold, seen)? {
-                    set.push(Transition::new(
-                        next.act, next.to
-                    ));
+                    set.push(next);
                 }
                 Ok(set)
             },
@@ -293,7 +292,6 @@ impl<ID: Identifier> Process<ID> {
                         match l.act.sync(&r.act)? {
                             None => {},
                             Some(None) => {
-                                //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
                                     Action::Tau, Arc::new(Process::Parallel(
                                         Arc::clone(&l.to),
@@ -302,20 +300,18 @@ impl<ID: Identifier> Process<ID> {
                                 ));
                             },
                             Some(Some((Side::Left, var, val))) => {
-                                //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
                                     Action::Tau, Arc::new(Process::Parallel(
-                                        Arc::new(l.to.subst(var.clone(), &val, fold)),
+                                        Process::subst_input(&l.to, &var, &val, fold),
                                         Arc::clone(&r.to)
                                     ))
                                 ));
                             },
                             Some(Some((Side::Right, var, val))) => {
-                                //println!("SYNC: {} ||| {}", l.act, r.act);
                                 set.push(Transition::new(
                                     Action::Tau, Arc::new(Process::Parallel(
                                         Arc::clone(&l.to),
-                                        Arc::new(r.to.subst(var.clone(), &val, fold))
+                                        Process::subst_input(&r.to, &var, &val, fold),
                                     ))
                                 ));
                             }
@@ -398,6 +394,42 @@ impl<ID: Identifier> Process<ID> {
                     Err(Error::WhenError(val))
                 }
             }
+            Process::InputPoint(_) =>
+                unreachable!(),
+        }
+    }
+
+    fn subst_input(this: &Arc<Process<ID>>, var: &ID, val: &Value, fold: &FoldOptions) -> Arc<Process<ID>> {
+        match this.as_ref() {
+            Process::Choice(l, r) =>
+                Arc::new(Process::Choice(
+                    Process::subst_input(l, var, val, fold),
+                    Process::subst_input(r, var, val, fold)
+                )),
+            Process::Parallel(l, r) =>
+                Arc::new(Process::Parallel(
+                    Process::subst_input(l, var, val, fold),
+                    Process::subst_input(r, var, val, fold)
+                )),
+            Process::Sequential(l, r) =>
+                Arc::new(Process::Sequential(
+                    Process::subst_input(l, var, val, fold),
+                    Arc::clone(r)
+                )),
+            Process::Restrict(p, comp, set) =>
+                Arc::new(Process::Restrict(
+                    Process::subst_input(p, var, val, fold),
+                    *comp, set.clone()
+                )),
+            Process::InputPoint(p) =>
+                Arc::new(p.subst(var.clone(), val, fold)),
+
+            Process::Null
+          | Process::Term
+          | Process::Name(_, _)
+          | Process::Prefix(_, _)
+          | Process::When(_, _) =>
+                Arc::clone(this)
         }
     }
 
@@ -534,7 +566,7 @@ impl<ID: Identifier> Process<ID> {
                     Some(p2) =>
                         Some(Process::Restrict(Arc::new(p2), *comp, set.clone()))
                 }
-            }
+            },
             Process::When(cond, p) => {
                 match (cond.subst_map_opt(subst, fold), p.subst_map_opt(subst, fold)) {
                     (None, None) =>
@@ -545,7 +577,9 @@ impl<ID: Identifier> Process<ID> {
                         Some(Process::When(cond2, p2))
                     }
                 }
-            }
+            },
+            Process::InputPoint(_) =>
+                unreachable!(),
         }
     }
 
@@ -570,7 +604,9 @@ impl<ID: Identifier> Process<ID> {
                 Process::Restrict(Arc::new(p.compress(dict)), *comp,
                     set.iter().map(|id| dict.lookup_insert(id)).collect()),
             Process::When(cond, p) =>
-                Process::When(cond.compress(dict), Arc::new(p.compress(dict)))
+                Process::When(cond.compress(dict), Arc::new(p.compress(dict))),
+            Process::InputPoint(_) =>
+                unreachable!()
         }
     }
 
@@ -595,7 +631,9 @@ impl<ID: Identifier> Process<ID> {
                 Process::Restrict(Arc::new(Process::uncompress(p, dict)), *comp,
                     set.iter().map(|id| dict.index_to_id(*id).clone()).collect()),
             Process::When(cond, p) =>
-                Process::When(Exp::uncompress(cond, dict), Arc::new(Process::uncompress(p, dict)))
+                Process::When(Exp::uncompress(cond, dict), Arc::new(Process::uncompress(p, dict))),
+            Process::InputPoint(_) =>
+                unreachable!()
         }
     }
 }
@@ -671,27 +709,27 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Action<usize>>
             Action::Delta =>
                 write!(f, "e"),
             Action::Act(name) =>
-                write!(f, "{}", DisplayCompressed(name, &self.1)),
+                write!(f, "{}", DisplayCompressed(name, self.1)),
             Action::Snd(name, None, None) =>
-                write!(f, "{}!", DisplayCompressed(name, &self.1)),
+                write!(f, "{}!", DisplayCompressed(name, self.1)),
             Action::Snd(name, None, Some(exp)) =>
-                write!(f, "{}!{}", DisplayCompressed(name, &self.1), exp),
+                write!(f, "{}!{}", DisplayCompressed(name, self.1), DisplayCompressed(exp, self.1)),
             Action::Snd(name, Some(param), None) =>
-                write!(f, "{}({})!", DisplayCompressed(name, &self.1), DisplayCompressed(param, &self.1)),
+                write!(f, "{}({})!", DisplayCompressed(name, self.1), DisplayCompressed(param, self.1)),
             Action::Snd(name, Some(param), Some(exp)) =>
-                write!(f, "{}({})!{}", DisplayCompressed(name, &self.1), DisplayCompressed(param, &self.1), DisplayCompressed(exp, &self.1)),
+                write!(f, "{}({})!{}", DisplayCompressed(name, self.1), DisplayCompressed(param, self.1), DisplayCompressed(exp, self.1)),
             Action::Recv(name, None, None) =>
-                write!(f, "{}?", DisplayCompressed(name, &self.1)),
+                write!(f, "{}?", DisplayCompressed(name, self.1)),
             Action::Recv(name, None, Some(exp)) =>
-                write!(f, "{}?({})", DisplayCompressed(name, &self.1), DisplayCompressed(exp, &self.1)),
+                write!(f, "{}?({})", DisplayCompressed(name, self.1), DisplayCompressed(exp, self.1)),
             Action::Recv(name, Some(param), None) =>
-                write!(f, "{}({})?", DisplayCompressed(name, &self.1), DisplayCompressed(param, &self.1)),
+                write!(f, "{}({})?", DisplayCompressed(name, self.1), DisplayCompressed(param, self.1)),
             Action::Recv(name, Some(param), Some(exp)) =>
-                write!(f, "{}({})?({})", DisplayCompressed(name, &self.1), DisplayCompressed(param, &self.1), DisplayCompressed(exp, &self.1)),
+                write!(f, "{}({})?({})", DisplayCompressed(name, self.1), DisplayCompressed(param, self.1), DisplayCompressed(exp, self.1)),
             Action::RecvInto(name, None, var) =>
-                write!(f, "{}?{}", DisplayCompressed(name, &self.1), DisplayCompressed(var, &self.1)),
+                write!(f, "{}?{}", DisplayCompressed(name, self.1), DisplayCompressed(var, self.1)),
             Action::RecvInto(name, Some(param), var) =>
-                write!(f, "{}({})?{}", DisplayCompressed(name, &self.1), DisplayCompressed(param, &self.1), DisplayCompressed(var, &self.1)),
+                write!(f, "{}({})?{}", DisplayCompressed(name, self.1), DisplayCompressed(param, self.1), DisplayCompressed(var, self.1)),
         }
     }
 }
@@ -742,7 +780,9 @@ impl<ID> fmt::Display for Process<ID>
                 write!(f, "}}")
             },
             Process::When(cond, p) =>
-                write!(f, "when {} {}", cond, p)
+                write!(f, "when {} {}", cond, p),
+            Process::InputPoint(p) =>
+                write!(f, "?({})", p)
         }
     }
 }
@@ -758,50 +798,44 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Process<usize>>
                 write!(f, "1"),
             Process::Name(name, args) =>
                 if args.is_empty() {
-                    write!(f, "{}", DisplayCompressed(name, &self.1))
+                    write!(f, "{}", DisplayCompressed(name, self.1))
                 } else {
-                    write!(f, "{}[", DisplayCompressed(name, &self.1))?;
+                    write!(f, "{}[", DisplayCompressed(name, self.1))?;
                     for (i, next) in args.iter().enumerate() {
                         if i == 0 {
-                            write!(f, "{}", DisplayCompressed(next, &self.1))?;
+                            write!(f, "{}", DisplayCompressed(next, self.1))?;
                         } else {
-                            write!(f, ", {}", DisplayCompressed(next, &self.1))?;
+                            write!(f, ", {}", DisplayCompressed(next, self.1))?;
                         }
                     }
                     write!(f, "]")
                 },
             Process::Prefix(act, p) =>
-                write!(f, "{}.{}", DisplayCompressed(act, &self.1), DisplayCompressed(p.as_ref(), &self.1)),
+                write!(f, "{}.{}", DisplayCompressed(act, self.1), DisplayCompressed(p.as_ref(), self.1)),
             Process::Choice(l, r) =>
-                write!(f, "({} + {})", DisplayCompressed(l.as_ref(), &self.1), DisplayCompressed(r.as_ref(), &self.1)),
+                write!(f, "({} + {})", DisplayCompressed(l.as_ref(), self.1), DisplayCompressed(r.as_ref(), self.1)),
             Process::Parallel(l, r) =>
-                write!(f, "({} | {})", DisplayCompressed(l.as_ref(), &self.1), DisplayCompressed(r.as_ref(), &self.1)),
+                write!(f, "({} | {})", DisplayCompressed(l.as_ref(), self.1), DisplayCompressed(r.as_ref(), self.1)),
             Process::Sequential(l, r) =>
-                write!(f, "({}; {})", DisplayCompressed(l.as_ref(), &self.1), DisplayCompressed(r.as_ref(), &self.1)),
+                write!(f, "({}; {})", DisplayCompressed(l.as_ref(), self.1), DisplayCompressed(r.as_ref(), self.1)),
             Process::Restrict(p, comp, set) => {
-                write!(f, "{}\\{{", DisplayCompressed(p.as_ref(), &self.1))?;
+                write!(f, "{}\\{{", DisplayCompressed(p.as_ref(), self.1))?;
                 if *comp {
                     write!(f, "*")?;
                 }
                 for (i, next) in set.iter().enumerate() {
                     if !*comp && i == 0 {
-                        write!(f, "{}", DisplayCompressed(next, &self.1))?;
+                        write!(f, "{}", DisplayCompressed(next, self.1))?;
                     } else {
-                        write!(f, ", {}", DisplayCompressed(next, &self.1))?;
+                        write!(f, ", {}", DisplayCompressed(next, self.1))?;
                     }
                 }
                 write!(f, "}}")
             },
             Process::When(cond, p) =>
-                write!(f, "when {} {}", DisplayCompressed(cond, &self.1), DisplayCompressed(p.as_ref(), &self.1))
+                write!(f, "when {} {}", DisplayCompressed(cond, self.1), DisplayCompressed(p.as_ref(), self.1)),
+            Process::InputPoint(p) =>
+                write!(f, "?({})", DisplayCompressed(p.as_ref(), self.1))
         }
-    }
-}
-
-impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Arc<Process<usize>>>
-    where ID: Identifier + fmt::Display
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        DisplayCompressed(self.0.as_ref(), self.1).fmt(f)
     }
 }

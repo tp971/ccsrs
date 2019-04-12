@@ -354,17 +354,9 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Exp<usize>>
             Exp::BoolConst(b) => write!(f, "{}", b),
             Exp::IntConst(n) => write!(f, "{}", n),
             Exp::StrConst(s) => write!(f, "{:?}", s),
-            Exp::IdExp(id) => write!(f, "{}", DisplayCompressed(id, &self.1)),
-            Exp::Unary(op, e) => write!(f, "({}{})", op, e),
-            Exp::Binary(op, l, r) => write!(f, "({} {} {})", l, op, r)
+            Exp::IdExp(id) => write!(f, "{}", DisplayCompressed(id, self.1)),
+            Exp::Unary(op, e) => write!(f, "({}{})", op, DisplayCompressed(e.as_ref(), self.1)),
+            Exp::Binary(op, l, r) => write!(f, "({} {} {})", DisplayCompressed(l.as_ref(), self.1), op, DisplayCompressed(r.as_ref(), self.1))
         }
-    }
-}
-
-impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Arc<Exp<usize>>>
-    where ID: Identifier + fmt::Display
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        DisplayCompressed(self.0.as_ref(), self.1).fmt(f)
     }
 }

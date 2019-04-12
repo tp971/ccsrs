@@ -458,6 +458,6 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Transition<usize>>
     where ID: Identifier + fmt::Display
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "--( {} )-> {}", DisplayCompressed(&self.0.act, self.1), DisplayCompressed(&self.0.to, self.1))
+        write!(f, "--( {} )-> {}", DisplayCompressed(&self.0.act, self.1), DisplayCompressed(self.0.to.as_ref(), self.1))
     }
 }
