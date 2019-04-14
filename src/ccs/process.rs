@@ -33,7 +33,7 @@ pub enum Side {
 }
 
 impl<ID: Identifier> Action<ID> {
-    pub fn sync(&self, other: &Action<ID>) -> Result<Option<Option<(Side, ID, Value)>>, ID> {
+    pub fn sync(&self, other: &Action<ID>) -> Result<Option<(Side, Option<(ID, Value)>)>, ID> {
         //eprintln!("TRY SYNC: {} ||| {}", self, other);
         match (self, other) {
             (Action::Snd(name1, param1, exp1), Action::Recv(name2, param2, exp2))
@@ -59,7 +59,11 @@ impl<ID: Identifier> Action<ID> {
                     (None, None) => {},
                     _ => { return Ok(None); }
                 }
-                Ok(Some(None))
+                if let Action::Recv(_, _, _) = self {
+                    Ok(Some((Side::Left, None)))
+                } else {
+                    Ok(Some((Side::Right, None)))
+                }
             }
 
             (Action::Snd(name1, param1, Some(exp)), Action::RecvInto(name2, param2, var))
@@ -77,9 +81,9 @@ impl<ID: Identifier> Action<ID> {
                     _ => { return Ok(None); }
                 }
                 if let Action::RecvInto(_, _, _) = self {
-                    Ok(Some(Some((Side::Left, var.clone(), exp.eval()?))))
+                    Ok(Some((Side::Left, Some((var.clone(), exp.eval()?)))))
                 } else {
-                    Ok(Some(Some((Side::Right, var.clone(), exp.eval()?))))
+                    Ok(Some((Side::Right, Some((var.clone(), exp.eval()?)))))
                 }
             },
 
@@ -241,7 +245,7 @@ impl<ID: Identifier> Process<ID> {
             },
             Process::Term => {
                 Ok(vec![Transition::new(
-                    Action::Delta, Arc::new(Process::Null)
+                    Action::Delta, None, Arc::new(Process::Null)
                 )])
             },
             Process::Name(name, args) => {
@@ -268,12 +272,12 @@ impl<ID: Identifier> Process<ID> {
             },
             Process::Prefix(act @ Action::RecvInto(_, _, _), p) => {
                 Ok(vec![Transition::new(
-                    act.eval()?, Arc::new(Process::InputPoint(Arc::clone(p)))
+                    act.eval()?, None, Arc::new(Process::InputPoint(Arc::clone(p)))
                 )])
             },
             Process::Prefix(act, p) => {
                 Ok(vec![Transition::new(
-                    act.eval()?, Arc::clone(p)
+                    act.eval()?, None, Arc::clone(p)
                 )])
             },
             Process::Choice(l, r) => {
@@ -291,25 +295,33 @@ impl<ID: Identifier> Process<ID> {
                     for r in trans_r.iter() {
                         match l.act.sync(&r.act)? {
                             None => {},
-                            Some(None) => {
+                            Some((Side::Left, None)) => {
                                 set.push(Transition::new(
-                                    Action::Tau, Arc::new(Process::Parallel(
+                                    Action::Tau, Some(r.act.clone()), Arc::new(Process::Parallel(
                                         Arc::clone(&l.to),
                                         Arc::clone(&r.to)
                                     ))
                                 ));
                             },
-                            Some(Some((Side::Left, var, val))) => {
+                            Some((Side::Right, None)) => {
                                 set.push(Transition::new(
-                                    Action::Tau, Arc::new(Process::Parallel(
+                                    Action::Tau, Some(l.act.clone()), Arc::new(Process::Parallel(
+                                        Arc::clone(&l.to),
+                                        Arc::clone(&r.to)
+                                    ))
+                                ));
+                            },
+                            Some((Side::Left, Some((var, val)))) => {
+                                set.push(Transition::new(
+                                    Action::Tau, Some(r.act.clone()), Arc::new(Process::Parallel(
                                         Process::subst_input(&l.to, &var, &val, fold),
                                         Arc::clone(&r.to)
                                     ))
                                 ));
                             },
-                            Some(Some((Side::Right, var, val))) => {
+                            Some((Side::Right, Some((var, val)))) => {
                                 set.push(Transition::new(
-                                    Action::Tau, Arc::new(Process::Parallel(
+                                    Action::Tau, Some(l.act.clone()), Arc::new(Process::Parallel(
                                         Arc::clone(&l.to),
                                         Process::subst_input(&r.to, &var, &val, fold),
                                     ))
@@ -319,7 +331,7 @@ impl<ID: Identifier> Process<ID> {
 
                         if let (Action::Delta, Action::Delta) = (&l.act, &r.act) {
                             set.push(Transition::new(
-                                Action::Delta, Arc::new(Process::Parallel(
+                                Action::Delta, None, Arc::new(Process::Parallel(
                                     Arc::clone(&l.to),
                                     Arc::clone(&r.to)
                                 ))
@@ -332,7 +344,7 @@ impl<ID: Identifier> Process<ID> {
                         continue;
                     }
                     set.push(Transition::new(
-                        next.act, Arc::new(Process::Parallel(
+                        next.act, next.sync, Arc::new(Process::Parallel(
                             next.to, Arc::clone(r)
                         ))
                     ));
@@ -342,7 +354,7 @@ impl<ID: Identifier> Process<ID> {
                         continue;
                     }
                     set.push(Transition::new(
-                        next.act, Arc::new(Process::Parallel(
+                        next.act, next.sync, Arc::new(Process::Parallel(
                             Arc::clone(l), next.to
                         ))
                     ));
@@ -354,11 +366,11 @@ impl<ID: Identifier> Process<ID> {
                 for next in l._get_transitions(program, fold, seen)? {
                     if let Action::Delta = next.act {
                         set.push(Transition::new(
-                            Action::Tau, Arc::clone(r)
+                            Action::Tau, None, Arc::clone(r)
                         ));
                     } else {
                         set.push(Transition::new(
-                            next.act,
+                            next.act, next.sync,
                             Arc::new(Process::Sequential(next.to, Arc::clone(r)))
                         ));
                     }
@@ -376,7 +388,7 @@ impl<ID: Identifier> Process<ID> {
                         }
                     }
                     res.push(Transition::new(
-                        next.act,
+                        next.act, next.sync,
                         Arc::new(Process::Restrict(next.to, *comp, set.clone()))
                     ));
                 }

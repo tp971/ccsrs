@@ -18,7 +18,7 @@ impl<T> Identifier for T
 {}
 
 #[derive(Debug, Clone)]
-pub struct Dict<ID: Identifier> {
+pub struct Dict<ID: Identifier = String> {
     id_to_index: HashMap<ID, usize>,
     index_to_id: Vec<ID>
 }
@@ -95,6 +95,7 @@ pub struct Program<ID: Identifier = String> {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Transition<ID: Identifier = String> {
     pub act: Action<ID>,
+    pub sync: Option<Action<ID>>,
     pub to: Arc<Process<ID>>
 }
 
@@ -249,13 +250,14 @@ impl<ID: Identifier> Program<ID> {
 }
 
 impl<ID: Identifier> Transition<ID> {
-    pub fn new(act: Action<ID>, to: Arc<Process<ID>>) -> Transition<ID> {
-        Transition { act, to }
+    pub fn new(act: Action<ID>, sync: Option<Action<ID>>, to: Arc<Process<ID>>) -> Transition<ID> {
+        Transition { act, sync, to }
     }
 
     pub fn compress(&self, dict: &mut Dict<ID>) -> Transition<usize> {
         Transition {
             act: self.act.compress(dict),
+            sync: self.sync.as_ref().map(|sync| sync.compress(dict)),
             to: Arc::new(self.to.compress(dict))
         }
     }
@@ -263,6 +265,7 @@ impl<ID: Identifier> Transition<ID> {
     pub fn uncompress(other: &Transition<usize>, dict: &Dict<ID>) -> Transition<ID> {
         Transition {
             act: Action::uncompress(&other.act, dict),
+            sync: other.sync.as_ref().map(|sync| Action::uncompress(sync, dict)),
             to: Arc::new(Process::uncompress(&other.to, dict))
         }
     }
@@ -450,7 +453,12 @@ impl<ID> fmt::Display for Transition<ID>
     where ID: Identifier + fmt::Display
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "--( {} )-> {}", self.act, self.to)
+        match &self.sync {
+            Some(sync) =>
+                write!(f, "--( {} ({}) )-> {}", self.act, sync, self.to),
+            _ =>
+                write!(f, "--( {} )-> {}", self.act, self.to)
+        }
     }
 }
 
@@ -458,6 +466,11 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Transition<usize>>
     where ID: Identifier + fmt::Display
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "--( {} )-> {}", DisplayCompressed(&self.0.act, self.1), DisplayCompressed(self.0.to.as_ref(), self.1))
+        match &self.0.sync {
+            Some(sync) =>
+                write!(f, "--( {} ({}) )-> {}", DisplayCompressed(&self.0.act, self.1), DisplayCompressed(sync, self.1), DisplayCompressed(self.0.to.as_ref(), self.1)),
+            _ =>
+                write!(f, "--( {} )-> {}", DisplayCompressed(&self.0.act, self.1), DisplayCompressed(self.0.to.as_ref(), self.1))
+        }
     }
 }
