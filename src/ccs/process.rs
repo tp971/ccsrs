@@ -5,16 +5,6 @@ use std::fmt;
 use std::sync::Arc;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Action<ID: Identifier = String> {
-    Tau,
-    Delta,
-    Act(ID),
-    Snd(ID, Option<Exp<ID>>, Option<Exp<ID>>),
-    Recv(ID, Option<Exp<ID>>, Option<Exp<ID>>),
-    RecvInto(ID, Option<Exp<ID>>, ID)
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Process<ID: Identifier = String> {
     Null,
     Term,
@@ -26,198 +16,6 @@ pub enum Process<ID: Identifier = String> {
     Restrict(Arc<Process<ID>>, bool, BTreeSet<ID>), //process, complement, restriction set
     When(Exp<ID>, Arc<Process<ID>>),
     InputPoint(Arc<Process<ID>>),
-}
-
-pub enum Side {
-    Left, Right
-}
-
-impl<ID: Identifier> Action<ID> {
-    pub fn sync(&self, other: &Action<ID>) -> Result<Option<(Side, Option<(ID, Value)>)>, ID> {
-        //eprintln!("TRY SYNC: {} ||| {}", self, other);
-        match (self, other) {
-            (Action::Snd(name1, param1, exp1), Action::Recv(name2, param2, exp2))
-          | (Action::Recv(name2, param2, exp2), Action::Snd(name1, param1, exp1)) => {
-                if name1 != name2 {
-                    return Ok(None);
-                }
-                match (param1, param2) {
-                    (Some(param1), Some(param2)) => {
-                        if param1.eval()? != param2.eval()? {
-                            return Ok(None);
-                        }
-                    },
-                    (None, None) => {},
-                    _ => { return Ok(None); }
-                }
-                match (exp1, exp2) {
-                    (Some(exp1), Some(exp2)) => {
-                        if exp1.eval()? != exp2.eval()? {
-                            return Ok(None);
-                        }
-                    },
-                    (None, None) => {},
-                    _ => { return Ok(None); }
-                }
-                if let Action::Recv(_, _, _) = self {
-                    Ok(Some((Side::Left, None)))
-                } else {
-                    Ok(Some((Side::Right, None)))
-                }
-            }
-
-            (Action::Snd(name1, param1, Some(exp)), Action::RecvInto(name2, param2, var))
-          | (Action::RecvInto(name2, param2, var), Action::Snd(name1, param1, Some(exp))) => {
-                if name1 != name2 {
-                    return Ok(None);
-                }
-                match (param1, param2) {
-                    (Some(param1), Some(param2)) => {
-                        if param1.eval()? != param2.eval()? {
-                            return Ok(None);
-                        }
-                    },
-                    (None, None) => {},
-                    _ => { return Ok(None); }
-                }
-                if let Action::RecvInto(_, _, _) = self {
-                    Ok(Some((Side::Left, Some((var.clone(), exp.eval()?)))))
-                } else {
-                    Ok(Some((Side::Right, Some((var.clone(), exp.eval()?)))))
-                }
-            },
-
-            _ =>
-                Ok(None)
-        }
-    }
-
-    pub fn observe(&self) -> Option<&ID> {
-        match self {
-            Action::Act(name) | Action::Snd(name, _, _) | Action::Recv(name, _, _) | Action::RecvInto(name, _, _) =>
-                Some(name),
-            _ =>
-                None
-        }
-    }
-
-    pub fn subst<S>(&self, var: S, val: &Value, fold: &FoldOptions) -> Action<ID>
-        where S: Into<ID>
-    {
-        let mut subst = HashMap::new();
-        subst.insert(var.into(), val);
-        self.subst_map(&subst, fold)
-    }
-
-    pub fn subst_map(&self, subst: &HashMap<ID, &Value>, fold: &FoldOptions) -> Action<ID> {
-        match self {
-            Action::Tau
-          | Action::Delta
-          | Action::Act(_)
-          | Action::Snd(_, None, None)
-          | Action::Recv(_, None, None)
-          | Action::RecvInto(_, None, _) =>
-                self.clone(),
-
-            Action::Snd(name, None, Some(exp)) =>
-                Action::Snd(name.clone(), None, Some(Exp::subst_map(exp, subst, fold))),
-            Action::Snd(name, Some(param), None) =>
-                Action::Snd(name.clone(), Some(Exp::subst_map(param, subst, fold)), None),
-            Action::Snd(name, Some(param), Some(exp)) =>
-                Action::Snd(name.clone(), Some(Exp::subst_map(param, subst, fold)), Some(Exp::subst_map(exp, subst, fold))),
-
-            Action::Recv(name, None, Some(exp)) =>
-                Action::Recv(name.clone(), None, Some(Exp::subst_map(exp, subst, fold))),
-            Action::Recv(name, Some(param), None) =>
-                Action::Recv(name.clone(), Some(Exp::subst_map(param, subst, fold)), None),
-            Action::Recv(name, Some(param), Some(exp)) =>
-                Action::Recv(name.clone(), Some(Exp::subst_map(param, subst, fold)), Some(Exp::subst_map(exp, subst, fold))),
-
-            Action::RecvInto(name, Some(param), var2) =>
-                Action::RecvInto(name.clone(), Some(Exp::subst_map(param, subst, fold)), var2.clone()),
-        }
-    }
-
-    pub fn eval(&self) -> Result<Action<ID>, ID> {
-        match self {
-            Action::Tau
-          | Action::Delta
-          | Action::Act(_)
-          | Action::Snd(_, None, None)
-          | Action::Recv(_, None, None)
-          | Action::RecvInto(_, None, _) =>
-                Ok(self.clone()),
-
-            Action::Snd(name, None, Some(exp)) =>
-                Ok(Action::Snd(name.clone(), None, Some(exp.eval()?.into()))),
-            Action::Snd(name, Some(param), None) =>
-                Ok(Action::Snd(name.clone(), Some(param.eval()?.into()), None)),
-            Action::Snd(name, Some(param), Some(exp)) =>
-                Ok(Action::Snd(name.clone(), Some(param.eval()?.into()), Some(exp.eval()?.into()))),
-
-            Action::Recv(name, None, Some(exp)) =>
-                Ok(Action::Recv(name.clone(), None, Some(exp.eval()?.into()))),
-            Action::Recv(name, Some(param), None) =>
-                Ok(Action::Recv(name.clone(), Some(param.eval()?.into()), None)),
-            Action::Recv(name, Some(param), Some(exp)) =>
-                Ok(Action::Recv(name.clone(), Some(param.eval()?.into()), Some(exp.eval()?.into()))),
-
-            Action::RecvInto(name, Some(param), var) =>
-                Ok(Action::RecvInto(name.clone(), Some(param.eval()?.into()), var.clone()))
-        }
-    }
-
-    pub fn compress(&self, dict: &mut Dict<ID>) -> Action<usize> {
-        match self {
-            Action::Tau =>
-                Action::Tau,
-            Action::Delta =>
-                Action::Delta,
-            Action::Act(id) =>
-                Action::Act(dict.lookup_insert(id)),
-            Action::Snd(id, param, exp) =>
-                Action::Snd(dict.lookup_insert(id),
-                    param.as_ref().map(|param| param.compress(dict)),
-                    exp.as_ref().map(|exp| exp.compress(dict))
-                ),
-            Action::Recv(id, param, exp) =>
-                Action::Recv(dict.lookup_insert(id),
-                    param.as_ref().map(|param| param.compress(dict)),
-                    exp.as_ref().map(|exp| exp.compress(dict))
-                ),
-            Action::RecvInto(id, param, var) =>
-                Action::RecvInto(dict.lookup_insert(id),
-                    param.as_ref().map(|param| param.compress(dict)),
-                    dict.lookup_insert(var)
-                )
-        }
-    }
-
-    pub fn uncompress(other: &Action<usize>, dict: &Dict<ID>) -> Action<ID> {
-        match other {
-            Action::Tau =>
-                Action::Tau,
-            Action::Delta =>
-                Action::Delta,
-            Action::Act(id) =>
-                Action::Act(dict.index_to_id(*id).clone()),
-            Action::Snd(id, param, exp) =>
-                Action::Snd(dict.index_to_id(*id).clone(),
-                    param.as_ref().map(|param| Exp::uncompress(param, dict)),
-                    exp.as_ref().map(|exp| Exp::uncompress(exp, dict))
-                ),
-            Action::Recv(id, param, exp) =>
-                Action::Recv(dict.index_to_id(*id).clone(),
-                    param.as_ref().map(|param| Exp::uncompress(param, dict)),
-                    exp.as_ref().map(|exp| Exp::uncompress(exp, dict))
-                ),
-            Action::RecvInto(id, param, var) =>
-                Action::RecvInto(dict.index_to_id(*id).clone(),
-                    param.as_ref().map(|param| Exp::uncompress(param, dict)),
-                    dict.index_to_id(*var).clone()
-                )
-        }
-    }
 }
 
 impl<ID: Identifier> Process<ID> {
@@ -526,16 +324,14 @@ impl<ID: Identifier> Process<ID> {
                 }
             },
             Process::Prefix(act, p) => {
-                let act2 = act.subst_map(subst, fold);
-                match p.subst_map_opt(subst, fold) {
-                    None =>
-                        if act2 == *act {
-                            None
-                        } else {
-                            Some(Process::Prefix(act2, Arc::clone(p)))
-                        },
-                    Some(p2) =>
-                        Some(Process::Prefix(act2, Arc::new(p2)))
+                match (act.subst_map_opt(subst, fold), p.subst_map_opt(subst, fold)) {
+                    (None, None) =>
+                        None,
+                    (act2, p2) => {
+                        let act2 = act2.map_or_else(|| act.clone(), |act2| act2);
+                        let p2 = p2.map_or_else(|| Arc::clone(&p), |p2| Arc::new(p2));
+                        Some(Process::Prefix(act2, p2))
+                    }
                 }
             }
             Process::Choice(l, r) => {
@@ -651,100 +447,6 @@ impl<ID: Identifier> Process<ID> {
 }
 
 
-
-impl<ID: Identifier> From<bool> for Exp<ID> {
-    fn from(b: bool) -> Self {
-        Exp::BoolConst(b)
-    }
-}
-
-impl<ID: Identifier> From<i64> for Exp<ID> {
-    fn from(n: i64) -> Self {
-        Exp::IntConst(n)
-    }
-}
-
-impl<ID: Identifier> From<&str> for Exp<ID> {
-    fn from(s: &str) -> Self {
-        Exp::StrConst(s.to_string())
-    }
-}
-
-impl<ID: Identifier> From<String> for Exp<ID> {
-    fn from(s: String) -> Self {
-        Exp::StrConst(s)
-    }
-}
-
-impl<ID> fmt::Display for Action<ID>
-    where ID: Identifier + fmt::Display
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Action::Tau =>
-                write!(f, "i"),
-            Action::Delta =>
-                write!(f, "e"),
-            Action::Act(name) =>
-                write!(f, "{}", name),
-            Action::Snd(name, None, None) =>
-                write!(f, "{}!", name),
-            Action::Snd(name, None, Some(exp)) =>
-                write!(f, "{}!{}", name, exp),
-            Action::Snd(name, Some(param), None) =>
-                write!(f, "{}({})!", name, param),
-            Action::Snd(name, Some(param), Some(exp)) =>
-                write!(f, "{}({})!{}", name, param, exp),
-            Action::Recv(name, None, None) =>
-                write!(f, "{}?", name),
-            Action::Recv(name, None, Some(exp)) =>
-                write!(f, "{}?({})", name, exp),
-            Action::Recv(name, Some(param), None) =>
-                write!(f, "{}({})?", name, param),
-            Action::Recv(name, Some(param), Some(exp)) =>
-                write!(f, "{}({})?({})", name, param, exp),
-            Action::RecvInto(name, None, var) =>
-                write!(f, "{}?{}", name, var),
-            Action::RecvInto(name, Some(param), var) =>
-                write!(f, "{}({})?{}", name, param, var),
-        }
-    }
-}
-
-impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Action<usize>>
-    where ID: Identifier + fmt::Display
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.0 {
-            Action::Tau =>
-                write!(f, "i"),
-            Action::Delta =>
-                write!(f, "e"),
-            Action::Act(name) =>
-                write!(f, "{}", DisplayCompressed(name, self.1)),
-            Action::Snd(name, None, None) =>
-                write!(f, "{}!", DisplayCompressed(name, self.1)),
-            Action::Snd(name, None, Some(exp)) =>
-                write!(f, "{}!{}", DisplayCompressed(name, self.1), DisplayCompressed(exp, self.1)),
-            Action::Snd(name, Some(param), None) =>
-                write!(f, "{}({})!", DisplayCompressed(name, self.1), DisplayCompressed(param, self.1)),
-            Action::Snd(name, Some(param), Some(exp)) =>
-                write!(f, "{}({})!{}", DisplayCompressed(name, self.1), DisplayCompressed(param, self.1), DisplayCompressed(exp, self.1)),
-            Action::Recv(name, None, None) =>
-                write!(f, "{}?", DisplayCompressed(name, self.1)),
-            Action::Recv(name, None, Some(exp)) =>
-                write!(f, "{}?({})", DisplayCompressed(name, self.1), DisplayCompressed(exp, self.1)),
-            Action::Recv(name, Some(param), None) =>
-                write!(f, "{}({})?", DisplayCompressed(name, self.1), DisplayCompressed(param, self.1)),
-            Action::Recv(name, Some(param), Some(exp)) =>
-                write!(f, "{}({})?({})", DisplayCompressed(name, self.1), DisplayCompressed(param, self.1), DisplayCompressed(exp, self.1)),
-            Action::RecvInto(name, None, var) =>
-                write!(f, "{}?{}", DisplayCompressed(name, self.1), DisplayCompressed(var, self.1)),
-            Action::RecvInto(name, Some(param), var) =>
-                write!(f, "{}({})?{}", DisplayCompressed(name, self.1), DisplayCompressed(param, self.1), DisplayCompressed(var, self.1)),
-        }
-    }
-}
 
 impl<ID> fmt::Display for Process<ID>
     where ID: Identifier + fmt::Display

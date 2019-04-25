@@ -259,6 +259,14 @@ impl<ID: Identifier> Exp<ID> {
     }
 }
 
+
+
+impl<ID: Identifier, T: Into<Exp<ID>> + Clone> From<&T> for Exp<ID> {
+    fn from(t: &T) -> Exp<ID> {
+        t.clone().into()
+    }
+}
+
 impl<ID: Identifier> From<Value> for Exp<ID> {
     fn from(val: Value) -> Exp<ID> {
         match val {
@@ -272,16 +280,57 @@ impl<ID: Identifier> From<Value> for Exp<ID> {
     }
 }
 
-impl<ID: Identifier> From<&Value> for Exp<ID> {
-    fn from(val: &Value) -> Exp<ID> {
-        match val {
-            Value::Bool(b) =>
-                Exp::BoolConst(*b),
-            Value::Int(n) =>
-                Exp::IntConst(*n),
-            Value::Str(s) =>
-                Exp::StrConst(s.clone()),
-        }
+impl<ID: Identifier> From<bool> for Exp<ID> {
+    fn from(b: bool) -> Self {
+        Exp::BoolConst(b)
+    }
+}
+
+impl<ID: Identifier> From<i64> for Exp<ID> {
+    fn from(n: i64) -> Self {
+        Exp::IntConst(n)
+    }
+}
+
+impl<ID: Identifier> From<&str> for Exp<ID> {
+    fn from(s: &str) -> Self {
+        Exp::StrConst(s.to_string())
+    }
+}
+
+impl<ID: Identifier> From<String> for Exp<ID> {
+    fn from(s: String) -> Self {
+        Exp::StrConst(s)
+    }
+}
+
+impl<T: Into<Value> + Clone> From<&T> for Value {
+    fn from(t: &T) -> Value {
+        t.clone().into()
+    }
+}
+
+impl From<bool> for Value {
+    fn from(b: bool) -> Self {
+        Value::Bool(b)
+    }
+}
+
+impl From<i64> for Value {
+    fn from(n: i64) -> Self {
+        Value::Int(n)
+    }
+}
+
+impl From<&str> for Value {
+    fn from(s: &str) -> Self {
+        Value::Str(s.to_string())
+    }
+}
+
+impl From<String> for Value {
+    fn from(s: String) -> Self {
+        Value::Str(s)
     }
 }
 
