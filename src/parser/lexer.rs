@@ -68,14 +68,12 @@ impl<I: Iterator<Item = io::Result<u8>>> Lexer<I> {
 
         if self.ch.is_none() {
             return Ok(TokenInfo {
-                row: self.row,
-                col: self.col,
+                loc: Location::new(self.row, self.col),
                 token: Token::EOF
             });
         }
 
-        let row = self.row;
-        let col = self.col;
+        let loc = Location::new(self.row, self.col);
         let token = match self.ch {
             Some('(') => { self._read(); Ok(Token::LPAR) },
             Some(')') => { self._read(); Ok(Token::RPAR) },
@@ -190,13 +188,13 @@ impl<I: Iterator<Item = io::Result<u8>>> Lexer<I> {
             }
         }?;
 
-        Ok(TokenInfo { row, col, token })
+        Ok(TokenInfo { loc, token })
     }
 
     fn _next_str(&mut self) -> Result<Token> {
         match self.ch {
             Some('"') => {},
-            _ => return Err(ParserError::new(self.row, self.col, "expected `'`".to_string()))
+            _ => return Err(ParserError::new(Location::new(self.row, self.col), "expected `'`".to_string()))
         }
 
         let mut s = Vec::new();
@@ -209,12 +207,12 @@ impl<I: Iterator<Item = io::Result<u8>>> Lexer<I> {
                     self.ch = Some(ch as char);
                     self.row += 1;
                     self.col = 0;
-                    return Err(ParserError::new(self.row, self.col, "unexpected newline".to_string()))
+                    return Err(ParserError::new(Location::new(self.row, self.col), "unexpected newline".to_string()))
                 },
                 Some(Ok(ch)) =>
                     s.push(ch),
                 _ =>
-                    return Err(ParserError::new(self.row, self.col, "unexpected end of file".to_string()))
+                    return Err(ParserError::new(Location::new(self.row, self.col), "unexpected end of file".to_string()))
             };
         }
         let s = String::from_utf8_lossy(&s).to_string();
@@ -245,7 +243,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Lexer<I> {
     }
 
     fn _next_num(&mut self) -> Result<Token> {
-        let (row, col) = (self.row, self.col);
+        let loc = Location::new(self.row, self.col);
 
         let mut num = String::new();
         loop {
@@ -259,12 +257,12 @@ impl<I: Iterator<Item = io::Result<u8>>> Lexer<I> {
         }
         match num.parse::<i64>() {
             Ok(num) => Ok(Token::INT(num)),
-            Err(_) => Err(ParserError::new(row, col, "invalid number".to_string()))
+            Err(_) => Err(ParserError::new(loc, "invalid number".to_string()))
         }
     }
 
     fn _error_skip(&mut self, desc: String) -> ParserError {
-        let res = ParserError::new(self.row, self.col, desc);
+        let res = ParserError::new(Location::new(self.row, self.col), desc);
         self._read();
         res
     }

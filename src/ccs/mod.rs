@@ -68,7 +68,7 @@ pub struct DisplayCompressed<'a, ID: Identifier, T>(pub &'a T, pub &'a Dict<ID>)
 
 
 
-type Result<T, ID> = std::result::Result<T, Error<ID>>;
+pub type Result<T, ID> = std::result::Result<T, Error<ID>>;
 
 #[derive(Debug, Clone)]
 pub enum Error<ID: Identifier> {
@@ -389,7 +389,7 @@ impl<ID> fmt::Display for Binding<ID>
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.args.is_empty() {
-            write!(f, "{} := {}", self.name, self.process)
+            write!(f, "{} := ({})", self.name, self.process)
         } else {
             write!(f, "{}[", self.name)?;
             for (i, next) in self.args.iter().enumerate() {
@@ -399,7 +399,7 @@ impl<ID> fmt::Display for Binding<ID>
                     write!(f, ", {}", next)?;
                 }
             }
-            write!(f, "] := {}", self.process)
+            write!(f, "] := ({})", self.process)
         }
     }
 }
@@ -409,7 +409,7 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Binding<usize>>
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.0.args.is_empty() {
-            write!(f, "{} := {}", DisplayCompressed(&self.0.name, self.1), DisplayCompressed(&self.0.process, self.1))
+            write!(f, "{} := ({})", DisplayCompressed(&self.0.name, self.1), DisplayCompressed(&self.0.process, self.1))
         } else {
             write!(f, "{}[", DisplayCompressed(&self.0.name, self.1))?;
             for (i, next) in self.0.args.iter().enumerate() {
@@ -419,7 +419,7 @@ impl<'a, ID> fmt::Display for DisplayCompressed<'a, ID, Binding<usize>>
                     write!(f, ", {}", DisplayCompressed(next, self.1))?;
                 }
             }
-            write!(f, "] := {}", DisplayCompressed(&self.0.process, self.1))
+            write!(f, "] := ({})", DisplayCompressed(&self.0.process, self.1))
         }
     }
 }

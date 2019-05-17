@@ -2,7 +2,6 @@ mod lexer;
 use lexer::Lexer;
 
 use crate::ccs::*;
-use crate::{ccs, ccs_exp};
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -13,25 +12,30 @@ pub type Result<T> = ::std::result::Result<T, ParserError>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParserError {
-    pub row: usize,
-    pub col: usize,
+    pub loc: Location,
     pub desc: String
 }
 
 impl ParserError {
-    pub fn new(row: usize, col: usize, desc: String) -> ParserError {
-        ParserError { row, col, desc }
+    pub fn new(loc: Location, desc: String) -> ParserError {
+        ParserError { loc, desc }
     }
 
     pub fn from_token(t: &TokenInfo, desc: String) -> ParserError {
-        ParserError { row: t.row, col: t.col, desc }
+        ParserError { loc: t.loc, desc }
     }
 }
 
 impl fmt::Display for ParserError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}: {}", self.row, self.col, self.desc)
+        write!(f, "{}:{}: {}", self.loc.row, self.loc.col, self.desc)
     }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct Location {
+    pub row: usize,
+    pub col: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -49,9 +53,14 @@ pub enum Token {
 
 #[derive(Debug, Clone)]
 pub struct TokenInfo {
-    pub row: usize,
-    pub col: usize,
+    pub loc: Location,
     pub token: Token
+}
+
+impl Location {
+    pub fn new(row: usize, col: usize) -> Location {
+        Location { row, col }
+    }
 }
 
 pub struct Parser<I: Iterator<Item = io::Result<u8>>> {
@@ -112,54 +121,31 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
     pub fn parse_process(&mut self, prec: i16) -> Result<Process<String>> {
         let mut acts = Vec::new();
         loop {
-            match (self.lexer.peek(0)?.token, self.lexer.peek(1)?.token) {
-                (Token::ID(ref name), _) if name == "i" => {
+            let t_name = self.lexer.peek(0)?;
+            match (t_name.token, self.lexer.peek(1)?.token) {
+                (Token::ID(name), Token::DOT) => {
                     self.lexer.next();
-                    let t = self.lexer.peek(0)?;
-                    if let Token::DOT = t.token {
-                        self.lexer.next();
+                    self.lexer.next();
+                    if name == "i" {
+                        acts.push(Action::Tau);
+                    } else if name == "e" {
+                        acts.push(Action::Delta);
                     } else {
-                        return Err(ParserError::from_token(&t,
-                            format!("unexpected {}, expected `.`", t)));
+                        acts.push(Action::Act(name));
                     }
-                    acts.push(Action::Tau);
                 },
-              | (Token::ID(ref name), _) if name == "e" => {
+                (Token::ID(name), t2 @ Token::BANG)
+              | (Token::ID(name), t2 @ Token::QUESTIONMARK)
+              | (Token::ID(name), t2 @ Token::LPAR) => {
                     self.lexer.next();
-                    let t = self.lexer.peek(0)?;
-                    if let Token::DOT = t.token {
-                        self.lexer.next();
+
+                    let param = if let Token::LPAR = t2 {
+                        Some(self.parse_exp(0)?)
                     } else {
-                        return Err(ParserError::from_token(&t,
-                            format!("unexpected {}, expected `.`", t)));
-                    }
-                    acts.push(Action::Delta);
-                },
-              | (Token::ID(name), Token::DOT) => {
-                    self.lexer.next();
-                    self.lexer.next();
-                    acts.push(Action::Act(name));
-                },
-                (Token::ID(name), Token::BANG)
-              | (Token::ID(name), Token::QUESTIONMARK)
-              | (Token::ID(name), Token::LPAR) => {
-                    self.lexer.next();
-                    let mut t = self.lexer.peek(0)?;
-                    let mut param = None;
+                        None
+                    };
 
-                    if let Token::LPAR = t.token {
-                        self.lexer.next();
-                        param = Some(self.parse_exp(0)?);
-                        t = self.lexer.peek(0)?;
-                        if let Token::RPAR = t.token {
-                            self.lexer.next();
-                            t = self.lexer.peek(0)?;
-                        } else {
-                            return Err(ParserError::from_token(&t,
-                                format!("unexpected {}, expected `)`", t)));
-                        }
-                    }
-
+                    let t = self.lexer.peek(0)?;
                     let send = match t.token {
                         Token::BANG => true,
                         Token::QUESTIONMARK => false,
@@ -170,11 +156,10 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
                     };
 
                     self.lexer.next();
-                    t = self.lexer.peek(0)?;
-                    match (send, t.token) {
+                    match (send, self.lexer.peek(0)?.token) {
                         (false, Token::ID(var)) => {
                             self.lexer.next();
-                            t = self.lexer.peek(0)?;
+                            let t = self.lexer.peek(0)?;
                             if let Token::DOT = t.token {
                                 self.lexer.next();
                                 acts.push(Action::RecvInto(name, param, var));
@@ -193,7 +178,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
                         },
                         (_, _) => {
                             let exp = self.parse_exp(0)?;
-                            t = self.lexer.peek(0)?;
+                            let t = self.lexer.peek(0)?;
                             if let Token::DOT = t.token {
                                 self.lexer.next();
                                 if send {
@@ -220,15 +205,15 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
                 self.lexer.next();
                 let cond = self.parse_exp(0)?;
                 let p = self.parse_process(Token::prec_proc_max())?;
-                ccs! { when (@cond) @p }
+                Process::When(cond, Arc::new(p))
             },
             Token::INT(0) => {
                 self.lexer.next();
-                ccs!{ 0 }
+                Process::Null
             },
             Token::INT(1) => {
                 self.lexer.next();
-                ccs!{ 1 }
+                Process::Term
             },
             Token::ID(id) => {
                 self.lexer.next();
@@ -236,20 +221,24 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
 
                 if let Token::LSQBR = self.lexer.peek(0)?.token {
                     self.lexer.next();
-                    loop {
-                        args.push(self.parse_exp(0)?);
-                        let t = self.lexer.peek(0)?;
-                        match t.token {
-                            Token::COMMA => {
-                                self.lexer.next();
-                            },
-                            Token::RSQBR => {
-                                self.lexer.next();
-                                break;
-                            },
-                            _ =>
-                                return Err(ParserError::from_token(&t,
-                                    format!("unexpected {}, expected `,` or `]`", t)))
+                    if let Token::RSQBR = self.lexer.peek(0)?.token {
+                        self.lexer.next();
+                    } else {
+                        loop {
+                            args.push(self.parse_exp(0)?);
+                            let t = self.lexer.peek(0)?;
+                            match t.token {
+                                Token::COMMA => {
+                                    self.lexer.next();
+                                },
+                                Token::RSQBR => {
+                                    self.lexer.next();
+                                    break;
+                                },
+                                _ =>
+                                    return Err(ParserError::from_token(&t,
+                                        format!("unexpected {}, expected `,` or `]`", t)))
+                            }
                         }
                     }
                 }
@@ -274,7 +263,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
         };
 
         while let Some(act) = acts.pop() {
-            res = ccs!{ @act.@res };
+            res = Process::Prefix(act, Arc::new(res));
         }
 
         let mut t = self.lexer.peek(0)?;
@@ -358,9 +347,9 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
                 self.lexer.next();
                 let rhs = self.parse_process(rprec)?;
                 res = match t.token {
-                    Token::PLUS => ccs!{ @res + @rhs },
-                    Token::PIPE => ccs!{ @res | @rhs },
-                    Token::SEMICOLON => ccs!{ @res; @rhs },
+                    Token::PLUS => Process::Choice(Arc::new(res), Arc::new(rhs)),
+                    Token::PIPE => Process::Parallel(Arc::new(res), Arc::new(rhs)),
+                    Token::SEMICOLON => Process::Sequential(Arc::new(res), Arc::new(rhs)),
                     _ => unreachable!()
                 };
             }
@@ -372,31 +361,37 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
         let mut res = match t.token {
             Token::PLUS => {
                 self.lexer.next();
-                ccs_exp!{ +@{self.parse_exp(Token::prec_exp_max())?} }
+                Exp::Unary(UnaryOp::Plus, Arc::new(
+                    self.parse_exp(Token::prec_exp_max())?
+                ))
             },
             Token::MINUS => {
                 self.lexer.next();
-                ccs_exp!{ -@{self.parse_exp(Token::prec_exp_max())?} }
+                Exp::Unary(UnaryOp::Minus, Arc::new(
+                    self.parse_exp(Token::prec_exp_max())?
+                ))
             },
             Token::BANG => {
                 self.lexer.next();
-                ccs_exp!{ !@{self.parse_exp(Token::prec_exp_max())?} }
+                Exp::Unary(UnaryOp::Not, Arc::new(
+                    self.parse_exp(Token::prec_exp_max())?
+                ))
             },
             Token::TRUE => {
                 self.lexer.next();
-                ccs_exp!{ :true }
+                Exp::from(true)
             },
             Token::FALSE => {
                 self.lexer.next();
-                ccs_exp!{ :false }
+                Exp::from(false)
             },
             Token::INT(num) => {
                 self.lexer.next();
-                ccs_exp!{ :num }
+                Exp::from(num)
             },
             Token::STR(s) => {
                 self.lexer.next();
-                ccs_exp!{ :s }
+                Exp::from(s)
             },
             Token::ID(id) => {
                 self.lexer.next();
@@ -408,7 +403,7 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
                 match t.token {
                     Token::INT(num) => {
                         self.lexer.next();
-                        ccs_exp!{ :num }
+                        Exp::from(num)
                     },
                     Token::ID(id) => {
                         self.lexer.next();
@@ -444,25 +439,66 @@ impl<I: Iterator<Item = io::Result<u8>>> Parser<I> {
             } else {
                 self.lexer.next();
                 let rhs = self.parse_exp(rprec)?;
-                res = match t.token {
-                    Token::PLUS => ccs_exp!{ @res + @rhs },
-                    Token::MINUS => ccs_exp!{ @res - @rhs },
-                    Token::STAR => ccs_exp!{ @res * @rhs },
-                    Token::SLASH => ccs_exp!{ @res / @rhs },
-                    Token::PERCENT => ccs_exp!{ @res % @rhs },
-                    Token::HAT => ccs_exp!{ @res ^ @rhs },
-                    Token::LESS => ccs_exp!{ @res < @rhs },
-                    Token::LESSEQ => ccs_exp!{ @res <= @rhs },
-                    Token::GREATER => ccs_exp!{ @res > @rhs },
-                    Token::GREATEREQ => ccs_exp!{ @res >= @rhs },
-                    Token::EQEQ => ccs_exp!{ @res == @rhs },
-                    Token::BANGEQ => ccs_exp!{ @res != @rhs },
-                    Token::ANDAND => ccs_exp!{ @res && @rhs },
-                    Token::PIPEPIPE => ccs_exp!{ @res || @rhs },
+                let op = match t.token {
+                    Token::PLUS => BinaryOp::Plus,
+                    Token::MINUS => BinaryOp::Minus,
+                    Token::STAR => BinaryOp::Star,
+                    Token::SLASH => BinaryOp::Slash,
+                    Token::PERCENT => BinaryOp::Percent,
+                    Token::HAT => BinaryOp::Hat,
+                    Token::LESS => BinaryOp::LT,
+                    Token::LESSEQ => BinaryOp::LEq,
+                    Token::GREATER => BinaryOp::GT,
+                    Token::GREATEREQ => BinaryOp::GEq,
+                    Token::EQEQ => BinaryOp::EqEq,
+                    Token::BANGEQ => BinaryOp::NEq,
+                    Token::ANDAND => BinaryOp::AndAnd,
+                    Token::PIPEPIPE => BinaryOp::PipePipe,
                     _ => unreachable!()
                 };
+                res = Exp::Binary(op, Arc::new(res), Arc::new(rhs));
             }
         }
+    }
+}
+
+impl Token {
+    pub fn prec_proc(&self) -> (i16, i16) {
+        match self {
+            Token::SEMICOLON => (0, 1),
+            Token::PIPE => (2, 3),
+            Token::PLUS => (4, 5),
+            _ => (-1, -1)
+        }
+    }
+
+    pub fn prec_proc_max() -> i16 {
+        6
+    }
+
+    pub fn prec_exp(&self) -> (i16, i16) {
+        match self {
+            Token::PIPEPIPE =>
+                (0, 1),
+            Token::ANDAND =>
+                (2, 3),
+            Token::EQEQ | Token::BANGEQ =>
+                (4, 5),
+            Token::LESS | Token::LESSEQ | Token::GREATER | Token::GREATEREQ =>
+                (6, 7),
+            Token::HAT =>
+                (8, 9),
+            Token::PLUS | Token::MINUS =>
+                (10, 11),
+            Token::STAR | Token::SLASH | Token::PERCENT =>
+                (12, 13),
+            _ =>
+                (-1, -1)
+        }
+    }
+
+    pub fn prec_exp_max() -> i16 {
+        12
     }
 }
 
@@ -508,46 +544,6 @@ impl fmt::Display for Token {
             Token::EQEQ => write!(f, "=="),
             Token::BANGEQ => write!(f, "!="),
         }
-    }
-}
-
-impl Token {
-    pub fn prec_proc(&self) -> (i16, i16) {
-        match self {
-            Token::SEMICOLON => (0, 1),
-            Token::PIPE => (2, 3),
-            Token::PLUS => (4, 5),
-            _ => (-1, -1)
-        }
-    }
-
-    pub fn prec_proc_max() -> i16 {
-        6
-    }
-
-    pub fn prec_exp(&self) -> (i16, i16) {
-        match self {
-            Token::PIPEPIPE =>
-                (0, 1),
-            Token::ANDAND =>
-                (2, 3),
-            Token::EQEQ | Token::BANGEQ =>
-                (4, 5),
-            Token::LESS | Token::LESSEQ | Token::GREATER | Token::GREATEREQ =>
-                (6, 7),
-            Token::HAT =>
-                (8, 9),
-            Token::PLUS | Token::MINUS =>
-                (10, 11),
-            Token::STAR | Token::SLASH | Token::PERCENT =>
-                (12, 13),
-            _ =>
-                (-1, -1)
-        }
-    }
-
-    pub fn prec_exp_max() -> i16 {
-        12
     }
 }
 

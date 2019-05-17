@@ -89,8 +89,28 @@ impl<ID: Identifier> Process<ID> {
                 let mut set = Vec::new();
                 let trans_l = l._get_transitions(program, fold, seen)?;
                 let trans_r = r._get_transitions(program, fold, seen)?;
-                for l in trans_l.iter() {
-                    for r in trans_r.iter() {
+
+                let mut lookup = HashMap::new();
+                let lookup_left = trans_l.len() <= trans_r.len();
+                let it = if lookup_left { trans_l.iter() } else { trans_r.iter() };
+                for l in it {
+                    if let Action::Tau = &l.act {
+                        continue;
+                    }
+                    lookup.entry(l.act.observe())
+                        .or_insert_with(|| Vec::new())
+                        .push(l);
+                }
+
+                let mut sync = |l: &Transition<ID>, r: &Transition<ID>| {
+                    if let (Action::Delta, Action::Delta) = (&l.act, &r.act) {
+                        set.push(Transition::new(
+                            Action::Delta, None, Arc::new(Process::Parallel(
+                                Arc::clone(&l.to),
+                                Arc::clone(&r.to)
+                            ))
+                        ));
+                    } else {
                         match l.act.sync(&r.act)? {
                             None => {},
                             Some((Side::Left, None)) => {
@@ -126,17 +146,34 @@ impl<ID: Identifier> Process<ID> {
                                 ));
                             }
                         }
+                    }
+                    Ok(())
+                };
 
-                        if let (Action::Delta, Action::Delta) = (&l.act, &r.act) {
-                            set.push(Transition::new(
-                                Action::Delta, None, Arc::new(Process::Parallel(
-                                    Arc::clone(&l.to),
-                                    Arc::clone(&r.to)
-                                ))
-                            ));
+                if lookup_left {
+                    for r in trans_r.iter() {
+                        if let Action::Tau = &r.act {
+                            continue;
+                        }
+                        if let Some(ls) = lookup.get(&r.act.observe()) {
+                            for l in ls {
+                                sync(l, r)?;
+                            }
+                        }
+                    }
+                } else {
+                    for l in trans_l.iter() {
+                        if let Action::Tau = &l.act {
+                            continue;
+                        }
+                        if let Some(rs) = lookup.get(&l.act.observe()) {
+                            for r in rs {
+                                sync(l, r)?;
+                            }
                         }
                     }
                 }
+
                 for next in trans_l {
                     if let Action::Delta = &next.act {
                         continue;
@@ -209,7 +246,7 @@ impl<ID: Identifier> Process<ID> {
         }
     }
 
-    fn subst_input(this: &Arc<Process<ID>>, var: &ID, val: &Value, fold: &FoldOptions) -> Arc<Process<ID>> {
+    pub fn subst_input(this: &Arc<Process<ID>>, var: &ID, val: &Value, fold: &FoldOptions) -> Arc<Process<ID>> {
         match this.as_ref() {
             Process::Choice(l, r) =>
                 Arc::new(Process::Choice(

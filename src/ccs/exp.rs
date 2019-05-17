@@ -3,7 +3,7 @@ use super::*;
 use std::fmt;
 use std::sync::Arc;
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Value {
     Bool(bool),
     Int(i64),
